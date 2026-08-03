@@ -1,0 +1,11 @@
+model,sparsifier,selection_ratio,geneval,dpg_bench
+Scale-RAE,w/o Loop,,0.4471,0.7656
+Scale-RAE,random,0.50,0.5029,0.7951
+Scale-RAE,condition-aware,0.50,0.5039,0.7846
+Scale-RAE,attention-aware,0.50,0.5008,0.7894
+Scale-RAE,random,0.70,0.5140,0.7962
+Scale-RAE,condition-aware,0.70,0.5175,0.7918
+Scale-RAE,attention-aware,0.70,0.5070,0.7918
+RAEv2,w/o Loop,,0.3829,0.7131
+RAEv2,random,0.50,0.4114,0.7429
+RAEv2,image/condition,,0.4170,0.7474

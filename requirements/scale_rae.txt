@@ -1,0 +1,15 @@
+# Install torch==2.5.1, torchvision==0.20.1, and torchaudio==2.5.1 from the
+# platform-appropriate CUDA 12.4 index before installing these packages.
+accelerate==0.23.0
+transformers==4.37.0
+huggingface-hub==0.25.2
+diffusers==0.21.4
+safetensors==0.8.0rc0
+sentencepiece==0.2.1
+protobuf>=3.20.3,<7
+pillow==12.2.0
+numpy==2.2.6
+einops==0.6.1
+einops-exts==0.0.4
+omegaconf>=2.3,<3
+hydra-core>=1.3,<2

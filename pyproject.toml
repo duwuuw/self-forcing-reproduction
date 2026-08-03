@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "token-loop-inference"
+version = "0.1.0"
+description = "Anonymous inference-only implementation for composable Dense/Sparse Token Loop and Loop Guidance"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+  "torch>=2.5,<2.7",
+]
+
+[project.optional-dependencies]
+media = ["Pillow==10.2.0"]
+test = ["pytest>=8,<9"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

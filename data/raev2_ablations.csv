@@ -1,0 +1,24 @@
+ablation,setting,loop_count,geneval,dpg_bench
+layer_range,w/o Loop,1,0.3829,0.7131
+layer_range,0-3,4,0.0000,0.2382
+layer_range,6-9,4,0.3789,0.7135
+layer_range,12-15,4,0.3764,0.7174
+layer_range,18-21,4,0.3873,0.7172
+layer_range,24-27,4,0.0644,0.4093
+layer_range,0-7,4,0.0021,0.2379
+layer_range,5-12,4,0.3678,0.7195
+layer_range,10-17,4,0.3806,0.7170
+layer_range,15-22,4,0.3795,0.7226
+layer_range,20-27,4,0.0685,0.4048
+loop_guidance_scale,0.00,4,0.3829,0.7131
+loop_guidance_scale,1.50,4,0.3787,0.7271
+loop_guidance_scale,2.25,4,0.3962,0.7286
+loop_guidance_scale,3.00,4,0.3892,0.7350
+loop_guidance_scale,3.75,4,0.3983,0.7397
+loop_guidance_scale,4.50,4,0.4120,0.7393
+loop_guidance_scale,5.25,4,0.4094,0.7495
+loop_guidance_scale,6.00,4,0.4217,0.7468
+loop_guidance_scale,6.75,4,0.4220,0.7483
+loop_guidance_scale,7.50,4,0.4274,0.7526
+loop_guidance_scale,8.25,4,0.4308,0.7487
+loop_guidance_scale,9.00,4,0.4532,0.7521

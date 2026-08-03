@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "seed": 42,
+  "one_image_per_prompt": true,
+  "prompt_id_format": "prompt{zero_based_index:05d}",
+  "benchmarks": {
+    "geneval": {
+      "file": "prompts/geneval_553.txt",
+      "count": 553,
+      "sha256": "55b6e3650e980c13daf30569eb666e000faf19bfc2b7b4cbe999fcdb7aa9d680"
+    },
+    "dpgbench": {
+      "file": "prompts/dpgbench_1065.txt",
+      "items_file": "prompts/dpgbench_1065_items.jsonl",
+      "count": 1065,
+      "sha256": "42d0f5f1b63b5c50a84b2579e54806f72f57bc364e2d4a2b272044f8bea3cc59",
+      "items_sha256": "11ad3a130566af1fc7458de544524fb2253f46d306f1a9248078791d2aecda26"
+    },
+    "geneval2": {
+      "file": "prompts/geneval2_800.txt",
+      "count": 800,
+      "sha256": "f7a0ad395fcb21864ac0e6240d1a91b1151826bdc16305a35395af132b83fe18"
+    }
+  }
+}

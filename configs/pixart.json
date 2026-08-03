@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "backend": "pixart",
+  "model": {
+    "repository": "PixArt-alpha/PixArt-XL-2-1024-MS",
+    "weights_included": false
+  },
+  "generation": {
+    "height": 1024,
+    "width": 1024,
+    "dtype": "bfloat16",
+    "num_inference_steps": 20,
+    "seed": 42,
+    "model_guidance": 4.5
+  },
+  "capabilities": {
+    "token_loops": ["dense"],
+    "loop_guidance_token_loops": ["dense"],
+    "sparse_selectors": []
+  },
+  "methods": {
+    "without_loop": {"enabled": false},
+    "dense_token_loop": {
+      "enabled": true,
+      "block_indices": [14, 15, 16, 17, 18, 19],
+      "operator": "euler",
+      "num_loops": 4,
+      "lambda_value": 1.0,
+      "start_frac": 0.0,
+      "end_frac": 0.5,
+      "token_operator": "dense",
+      "selector": "all"
+    },
+    "loop_guidance_dense_token_loop": {
+      "enabled": true,
+      "block_indices": [14, 15, 16, 17, 18, 19],
+      "operator": "euler",
+      "num_loops": 4,
+      "lambda_value": 1.0,
+      "start_frac": 0.0,
+      "end_frac": 0.5,
+      "token_operator": "dense",
+      "selector": "all",
+      "loopguidance_enabled": true,
+      "loopguidance_branch": "base",
+      "loopguidance_weight": 3.0
+    }
+  }
+}
