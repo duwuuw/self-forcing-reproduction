@@ -1,0 +1,29 @@
+__pycache__
+*.egg-info
+
+# Local model and checkpoint assets
+wan_models/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Local runtime, scheduler, and tracking state
+user.yaml
+scale_up_outputs/
+wandb/
+logs/
+*.log
+*.out
+*.err
+*.whl
+
+# Large local training prompt
+prompts/vidprom_filtered_extended.txt
+
+# Generated media
+images/*
+!images/.gitkeep
+videos/*
+!videos/.gitkeep
