@@ -20,8 +20,6 @@ logs/
 *.whl
 
 # Large local training prompt
-prompts/vidprom_filtered_extended.txt
-
 # Generated media
 images/*
 !images/.gitkeep

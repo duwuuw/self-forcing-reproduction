@@ -80,7 +80,7 @@ Other config files and corresponding checkpoints can be found in [configs](confi
 huggingface-cli download gdhe17/Self-Forcing checkpoints/ode_init.pt --local-dir .
 huggingface-cli download gdhe17/Self-Forcing vidprom_filtered_extended.txt --local-dir prompts
 ```
-The DMD configuration in this reproduction uses `prompts/vidprom_filtered_extended.txt`. This large training prompt file is intentionally not tracked in the GitHub repository; download it from Hugging Face with the command above, or use a smaller prompt file such as `prompts/MovieGenVideoBench.txt` for a smoke test. Our training algorithm (except for the GAN version) is data-free (**no video data is needed**). For now, we directly provide the ODE initialization checkpoint. ODE initialization follows the process described in the [CausVid](https://github.com/tianweiy/CausVid) repo; `scripts/generate_ode_pairs.py` contains the local helper used to generate ODE pairs.
+The DMD configuration in this reproduction uses `prompts/vidprom_filtered_extended.txt`, which is tracked with Git LFS in this private repository. If you clone the repository without Git LFS, install Git LFS and run `git lfs pull`; alternatively, download the prompt from Hugging Face with the command above. A smaller prompt file such as `prompts/MovieGenVideoBench.txt` can be used for a smoke test. Our training algorithm (except for the GAN version) is data-free (**no video data is needed**). For now, we directly provide the ODE initialization checkpoint. ODE initialization follows the process described in the [CausVid](https://github.com/tianweiy/CausVid) repo; `scripts/generate_ode_pairs.py` contains the local helper used to generate ODE pairs.
 
 ### Self Forcing Training with DMD
 The reference 64-GPU command is:
