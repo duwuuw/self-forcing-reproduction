@@ -124,6 +124,36 @@ The reference training run uses 600 iterations and completes in under 2 hours us
 3. Run a one-step multi-GPU smoke test with the same `train.py` code path before starting the 600-step run.
 4. Record the exact config, checkpoint step, GPU count, seed, and output directory for each run. W&B can be disabled for offline testing with `--disable-wandb`.
 
+## VBench Evaluation (step 600)
+
+当前仓库附带的 `vbench_eval_step600_results.json` 是对第 600 步 checkpoint 生成视频的 VBench 结果汇总；完整的逐视频结果保存在 `vbench_eval_step600_full_info.json`。本次结果使用 1 个样本/提示词，视频为 81 帧、16 FPS。不同指标由 VBench 的不同 prompt 子集计算，因此每个指标覆盖的视频数量不同，不能把所有指标简单视为同一个样本集上的平均分。
+
+| Dimension | Score |
+| --- | ---: |
+| Subject consistency | 0.9251 |
+| Background consistency | 0.9246 |
+| Temporal flickering | 0.9850 |
+| Motion smoothness | 0.9854 |
+| Dynamic degree | 0.2917 |
+| Aesthetic quality | 0.6399 |
+| Human action | 0.7900 |
+| Scene | 0.2892 |
+| Temporal style | 0.2322 |
+| Appearance style | 0.2141 |
+| Overall consistency | 0.2459 |
+
+### Why are the scores uneven?
+
+这种分布是当前评测设置和模型目标共同造成的，并不表示所有维度都同样好：
+
+1. **训练目标偏向时序稳定性。** Self-Forcing/DMD 主要解决自回归 rollout 的 train-test gap。因而主体一致性、背景一致性、帧间闪烁和运动平滑度较高是符合预期的。
+2. **Dynamic degree 不是质量分数。** 它衡量视频中动作/变化的程度。许多 prompt 本身是静态场景或低运动场景，较低分不能直接解释为生成失败；它也与 temporal flickering、motion smoothness 的定义不同。
+3. **Style 与 scene 分数依赖评测器和 prompt 分布。** `temporal_style`、`appearance_style`、`scene` 和 `overall_consistency` 使用专门的视觉/语义评测模型，容易受到 prompt 类型、文本措辞、画面构图以及模型域差异影响，不能由前四项时序指标推断。
+4. **这是单 checkpoint、单样本结果。** 结果来自 step 600，且每个 prompt 只有一个视频，没有多 seed 方差或置信区间。因此它适合作为当前复现状态的记录，不应被当作完整的统计结论。
+5. **评测覆盖范围按维度变化。** VBench 会为每个 dimension 选择对应的 prompt 集合；例如本次逐视频文件共有 616 条记录，但单项指标覆盖约 72--100 个视频。比较其他运行时必须保持同一 prompt 文件、视频规格、采样设置和 VBench 版本。
+
+因此，当前结果更准确的结论是：**step 600 模型的时序稳定性和主体/背景保持能力较好，但动态幅度、风格和场景语义维度仍偏弱，且这些分数需要在统一设置下用多次采样进一步验证。** 生成和评测流程见本节说明以及 `scripts/prepare_vbench_videos.py`。
+
 ## Acknowledgements
 This codebase is built on top of the open-source implementation of [CausVid](https://github.com/tianweiy/CausVid) by [Tianwei Yin](https://tianweiy.github.io/) and the [Wan2.1](https://github.com/Wan-Video/Wan2.1) repo.
 

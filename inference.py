@@ -4,11 +4,10 @@ import os
 from omegaconf import OmegaConf
 from tqdm import tqdm
 from torchvision import transforms
-from torchvision.io import write_video
 from einops import rearrange
+import cv2
 import torch.distributed as dist
 from torch.utils.data import DataLoader, SequentialSampler
-from torch.utils.data.distributed import DistributedSampler
 
 from pipeline import (
     CausalDiffusionInferencePipeline,
@@ -31,6 +30,7 @@ parser.add_argument("--i2v", action="store_true", help="Whether to perform I2V (
 parser.add_argument("--use_ema", action="store_true", help="Whether to use EMA parameters")
 parser.add_argument("--seed", type=int, default=0, help="Random seed")
 parser.add_argument("--num_samples", type=int, default=1, help="Number of samples to generate per prompt")
+parser.add_argument("--max_prompts", type=int, default=-1, help="Optional prompt count limit for a real smoke run")
 parser.add_argument("--save_with_index", action="store_true",
                     help="Whether to save the video using the index or prompt as the filename")
 args = parser.parse_args()
@@ -49,8 +49,8 @@ else:
     world_size = 1
     set_seed(args.seed)
 
-print(f'Free VRAM {get_cuda_free_memory_gb(gpu)} GB')
-low_memory = get_cuda_free_memory_gb(gpu) < 40
+print(f'Free VRAM {get_cuda_free_memory_gb(device)} GB')
+low_memory = get_cuda_free_memory_gb(device) < 40
 
 torch.set_grad_enabled(False)
 
@@ -66,17 +66,32 @@ else:
     # Multi-step diffusion inference
     pipeline = CausalDiffusionInferencePipeline(config, device=device)
 
+def _strip_fsdp_state_dict_prefix(state_dict):
+    """Load checkpoints saved from the FSDP-wrapped training model."""
+    normalized = {}
+    for key, value in state_dict.items():
+        if key.startswith("model._fsdp_wrapped_module."):
+            key = "model." + key[len("model._fsdp_wrapped_module."):]
+        elif key.startswith("_fsdp_wrapped_module."):
+            key = key[len("_fsdp_wrapped_module."):]
+        normalized[key] = value
+    return normalized
+
+
 if args.checkpoint_path:
     state_dict = torch.load(args.checkpoint_path, map_location="cpu")
-    pipeline.generator.load_state_dict(state_dict['generator' if not args.use_ema else 'generator_ema'])
+    weights_key = 'generator_ema' if args.use_ema else 'generator'
+    generator_state_dict = _strip_fsdp_state_dict_prefix(state_dict[weights_key])
+    pipeline.generator.load_state_dict(generator_state_dict, strict=True)
+    print(f"Loaded {weights_key} from {args.checkpoint_path}", flush=True)
 
 pipeline = pipeline.to(dtype=torch.bfloat16)
 if low_memory:
-    DynamicSwapInstaller.install_model(pipeline.text_encoder, device=gpu)
+    DynamicSwapInstaller.install_model(pipeline.text_encoder, device=device)
 else:
-    pipeline.text_encoder.to(device=gpu)
-pipeline.generator.to(device=gpu)
-pipeline.vae.to(device=gpu)
+    pipeline.text_encoder.to(device=device)
+pipeline.generator.to(device=device)
+pipeline.vae.to(device=device)
 
 
 # Create dataset
@@ -91,10 +106,18 @@ if args.i2v:
 else:
     dataset = TextDataset(prompt_path=args.data_path, extended_prompt_path=args.extended_prompt_path)
 num_prompts = len(dataset)
+if args.max_prompts > 0:
+    if args.i2v:
+        raise ValueError("--max_prompts is only supported for text-to-video inference")
+    dataset.prompt_list = dataset.prompt_list[:args.max_prompts]
+    if dataset.extended_prompt_list is not None:
+        dataset.extended_prompt_list = dataset.extended_prompt_list[:args.max_prompts]
+    num_prompts = len(dataset)
 print(f"Number of prompts: {num_prompts}")
 
 if dist.is_initialized():
-    sampler = DistributedSampler(dataset, shuffle=False, drop_last=True)
+    # Partition without padding so the final VBench prompts are not duplicated.
+    sampler = list(range(local_rank, num_prompts, world_size))
 else:
     sampler = SequentialSampler(dataset)
 dataloader = DataLoader(dataset, batch_size=1, sampler=sampler, num_workers=0, drop_last=False)
@@ -180,13 +203,20 @@ for i, batch_data in tqdm(enumerate(dataloader), disable=(local_rank != 0)):
     # Clear VAE cache
     pipeline.vae.model.clear_cache()
 
-    # Save the video if the current prompt is not a dummy prompt
+    # All processes save videos with an index-based name; OpenCV avoids torchvision's av dependency.
     if idx < num_prompts:
         model = "regular" if not args.use_ema else "ema"
         for seed_idx in range(args.num_samples):
-            # All processes save their videos
-            if args.save_with_index:
-                output_path = os.path.join(args.output_folder, f'{idx}-{seed_idx}_{model}.mp4')
-            else:
-                output_path = os.path.join(args.output_folder, f'{prompt[:100]}-{seed_idx}.mp4')
-            write_video(output_path, video[seed_idx], fps=16)
+            output_path = os.path.join(args.output_folder, f'{idx}-{seed_idx}_{model}.mp4')
+            frames = video[seed_idx].numpy().clip(0, 255).astype("uint8")
+            writer = cv2.VideoWriter(
+                output_path,
+                cv2.VideoWriter_fourcc(*"mp4v"),
+                16.0,
+                (frames.shape[2], frames.shape[1]),
+            )
+            if not writer.isOpened():
+                raise RuntimeError(f"Could not open video writer: {output_path}")
+            for frame in frames:
+                writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+            writer.release()

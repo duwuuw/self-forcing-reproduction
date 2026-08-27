@@ -18,9 +18,10 @@ class CausalInferencePipeline(torch.nn.Module):
         super().__init__()
         # Step 1: Initialize all models
         self.generator = WanDiffusionWrapper(
+            model_name=getattr(args, "generator_name", "Wan2.1-T2V-1.3B"),
             **getattr(args, "model_kwargs", {}), is_causal=True) if generator is None else generator
-        self.text_encoder = WanTextEncoder() if text_encoder is None else text_encoder
-        self.vae = WanVAEWrapper() if vae is None else vae
+        self.text_encoder = WanTextEncoder(model_name=getattr(args, "real_name", "Wan2.1-T2V-1.3B")) if text_encoder is None else text_encoder
+        self.vae = WanVAEWrapper(model_name=getattr(args, "real_name", "Wan2.1-T2V-1.3B")) if vae is None else vae
 
         # Step 2: Initialize all causal hyperparmeters
         self.scheduler = self.generator.get_scheduler()
@@ -38,6 +39,15 @@ class CausalInferencePipeline(torch.nn.Module):
         self.num_frame_per_block = getattr(args, "num_frame_per_block", 1)
         self.independent_first_frame = args.independent_first_frame
         self.local_attn_size = self.generator.model.local_attn_size
+        if self.local_attn_size == -1:
+            # The training config uses 21-frame windows. For longer VBench clips,
+            # retain only the recent 21 frames in every attention block's KV cache.
+            self.local_attn_size = 21
+            self.generator.model.local_attn_size = self.local_attn_size
+            for block in self.generator.model.blocks:
+                block.local_attn_size = self.local_attn_size
+                block.self_attn.local_attn_size = self.local_attn_size
+                block.self_attn.max_attention_size = self.local_attn_size * self.frame_seq_length
 
         print(f"KV inference with {self.num_frame_per_block} frames per block")
 
@@ -86,8 +96,15 @@ class CausalInferencePipeline(torch.nn.Module):
         )
 
         if low_memory:
-            gpu_memory_preservation = get_cuda_free_memory_gb(gpu) + 5
-            move_model_to_device_with_memory_preservation(self.text_encoder, target_device=gpu, preserved_memory_gb=gpu_memory_preservation)
+            # `demo_utils.memory.gpu` is created at import time before torchrun
+            # selects each rank's device; always use the current rank's device.
+            rank_device = noise.device
+            gpu_memory_preservation = get_cuda_free_memory_gb(rank_device) + 5
+            move_model_to_device_with_memory_preservation(
+                self.text_encoder,
+                target_device=rank_device,
+                preserved_memory_gb=gpu_memory_preservation,
+            )
 
         output = torch.zeros(
             [batch_size, num_output_frames, num_channels, height, width],

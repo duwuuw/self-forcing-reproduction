@@ -194,9 +194,7 @@ class Trainer:
         self.model.generator.load_state_dict(checkpoint["generator"], strict=True)
         self.model.fake_score.load_state_dict(checkpoint["critic"], strict=True)
         if "generator_optimizer" in checkpoint:
-            self.generator_optimizer.load_state_dict(checkpoint["generator_optimizer"])
-        if "critic_optimizer" in checkpoint:
-            self.critic_optimizer.load_state_dict(checkpoint["critic_optimizer"])
+            print("Optimizer state skipped for FSDP shard compatibility; using fresh optimizer state", flush=True)
         self.step = int(checkpoint.get("step", 0))
         if not self.step:
             match = re.search(r"checkpoint_model_(\d+)", str(path.parent))
