@@ -12,7 +12,7 @@ python -m unittest discover tests
 These CPU-only checks validate every preset and every supported method
 composition, exercise Dense/Sparse Token Loop with and without Loop Guidance,
 verify all 2,418 ordered prompt snapshots and checksums, check paper table
-shapes, and scan for retired method names, identity information,
+shapes, and scan for retired method names, private environment fragments,
 machine-specific paths, weights, and generated outputs.
 
 ## 2. Resolve a method configuration

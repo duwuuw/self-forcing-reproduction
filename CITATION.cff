@@ -1,0 +1,62 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the accompanying paper."
+title: "Training-Free Hidden-State Refinement for Flow-Matching Image Generators"
+type: software
+authors:
+  - family-names: Yan
+    given-names: Yuanyi
+    affiliation: Huazhong University of Science and Technology
+  - family-names: Rao
+    given-names: Xinzhe
+    affiliation: Huazhong University of Science and Technology
+  - family-names: Shen
+    given-names: Canyu
+    affiliation: Tongji University
+  - family-names: Chen
+    given-names: Yang
+    affiliation: Huazhong University of Science and Technology
+  - family-names: Chen
+    given-names: Yunlu
+    affiliation: King Abdullah University of Science and Technology
+  - family-names: Tang
+    given-names: Meng
+    affiliation: University of California, Merced
+  - family-names: Long
+    given-names: Teng
+    affiliation: University of Amsterdam
+  - family-names: Hu
+    given-names: Vincent Tao
+    affiliation: Huazhong University of Science and Technology
+version: 0.1.0
+date-released: "2026-08-29"
+license: MIT
+repository-code: "https://github.com/a1443356159/looped-flow-matching"
+url: "https://yuanyiyan.com/projects/looped-flow-matching"
+identifiers:
+  - type: doi
+    value: "10.48550/arXiv.2608.29160"
+    description: "arXiv-issued DOI"
+preferred-citation:
+  type: article
+  title: "Training-Free Hidden-State Refinement for Flow-Matching Image Generators"
+  authors:
+    - family-names: Yan
+      given-names: Yuanyi
+    - family-names: Rao
+      given-names: Xinzhe
+    - family-names: Shen
+      given-names: Canyu
+    - family-names: Chen
+      given-names: Yang
+    - family-names: Chen
+      given-names: Yunlu
+    - family-names: Tang
+      given-names: Meng
+    - family-names: Long
+      given-names: Teng
+    - family-names: Hu
+      given-names: Vincent Tao
+  journal: "arXiv preprint arXiv:2608.29160"
+  year: 2026
+  doi: "10.48550/arXiv.2608.29160"
+  url: "https://arxiv.org/abs/2608.29160"

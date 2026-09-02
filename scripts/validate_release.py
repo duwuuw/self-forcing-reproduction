@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CPU-only validation for the anonymous Code and Data Supplement."""
+"""CPU-only validation for the public code and data supplement."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from diffusion_loop.loop_config import VALID_SELECTORS  # noqa: E402
 
 
 TEXT_SUFFIXES = {
+    ".cff",
     ".csv",
     ".json",
     ".jsonl",
@@ -41,16 +42,12 @@ FORBIDDEN_METHOD_FRAGMENTS = (
     "aba" + "cacheb",
     "t" + "mix",
 )
-FORBIDDEN_IDENTITY_FRAGMENTS = (
+FORBIDDEN_PRIVATE_FRAGMENTS = (
     "n" + "m5",
     "a" + "login",
     "ehpc" + "821",
     "t" + "long",
     "y" + "yy",
-)
-EMAIL_PATTERN = re.compile(
-    r"(?<![\w.+-])[\w.+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+",
-    re.IGNORECASE,
 )
 FORBIDDEN_ARTIFACT_SUFFIXES = {
     ".bin",
@@ -72,6 +69,7 @@ PAPER_METHOD_IDS = {
     "loop_guidance_sparse_token_loop",
 }
 REQUIRED_RELEASE_FILES = {
+    "CITATION.cff",
     "LICENSE",
     "THIRD_PARTY.md",
     "ENVIRONMENT.md",
@@ -233,14 +231,12 @@ def validate_tree() -> int:
         for fragment in (
             FORBIDDEN_PATH_FRAGMENTS
             + FORBIDDEN_METHOD_FRAGMENTS
-            + FORBIDDEN_IDENTITY_FRAGMENTS
+            + FORBIDDEN_PRIVATE_FRAGMENTS
         ):
             if fragment in text:
                 raise ValueError(
                     f"forbidden release fragment in {path.relative_to(ROOT)}"
                 )
-        if EMAIL_PATTERN.search(text):
-            raise ValueError(f"possible email address in {path.relative_to(ROOT)}")
         count += 1
     return count
 

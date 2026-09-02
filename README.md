@@ -1,9 +1,18 @@
-# Anonymous Code and Data Supplement
+# Training-Free Hidden-State Refinement for Flow-Matching Image Generators
 
-This archive releases the inference-time implementation, exact paper presets,
-complete ordered benchmark prompt snapshots, generation/export/aggregation
-utilities, aggregate paper results, tests, and reproduction instructions. The
-method is organized as two independent choices:
+Official implementation and data supplement for:
+
+> **Training-Free Hidden-State Refinement for Flow-Matching Image Generators**<br>
+> Yuanyi Yan, Xinzhe Rao, Canyu Shen, Yang Chen, Yunlu Chen, Meng Tang,
+> Teng Long, and Vincent Tao Hu<br>
+> [Paper](https://arxiv.org/abs/2608.29160) ·
+> [PDF](https://arxiv.org/pdf/2608.29160) ·
+> [Project page](https://yuanyiyan.com/projects/looped-flow-matching)
+
+This repository provides the inference-time implementation, exact paper
+presets, complete ordered benchmark prompt snapshots,
+generation/export/aggregation utilities, aggregate paper results, tests, and
+reproduction instructions. The method is organized as two independent choices:
 
 1. the base token loop is **Dense Token Loop** or **Sparse Token Loop**; and
 2. **Loop Guidance** is an optional prediction-space modifier on either base
@@ -14,11 +23,10 @@ The PixArt-alpha and FLUX.2 transfer adapters implement the Dense Token Loop
 column, with or without Loop Guidance; Sparse Token Loop was not evaluated for
 those generators in the paper and is not claimed by their adapters.
 
-The release is deliberately minimal and anonymous. It contains no author or
-institution identifiers, cluster paths, job metadata, credentials, pretrained
-weights, generated answers, generated image grids, evaluator caches, or logs.
-The separately submitted Media Supplement contains selected prompt-matched
-visual comparisons.
+The release is deliberately minimal. It contains no private cluster paths, job
+metadata, credentials, pretrained weights, generated answers, generated image
+grids, evaluator caches, or logs. The accompanying media supplement contains
+selected prompt-matched visual comparisons.
 
 Original code is provided under the MIT license in `LICENSE`. Third-party
 prompt text and external model/evaluator components retain their upstream
@@ -90,3 +98,19 @@ python scripts/resolve_config.py \
 See `python scripts/resolve_config.py --help` for all overrides. The end-to-end
 prompt-plan, batch-generation, evaluator-export, and score-aggregation commands
 are in `REPRODUCE.md`.
+
+## Citation
+
+If this work is useful in your research, please cite:
+
+```bibtex
+@misc{yan2026trainingfree,
+  title={Training-Free Hidden-State Refinement for Flow-Matching Image Generators},
+  author={Yan, Yuanyi and Rao, Xinzhe and Shen, Canyu and Chen, Yang and Chen, Yunlu and Tang, Meng and Long, Teng and Hu, Vincent Tao},
+  year={2026},
+  eprint={2608.29160},
+  archivePrefix={arXiv},
+  primaryClass={cs.CV},
+  url={https://arxiv.org/abs/2608.29160}
+}
+```

@@ -5,11 +5,26 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "token-loop-inference"
 version = "0.1.0"
-description = "Anonymous inference-only implementation for composable Dense/Sparse Token Loop and Loop Guidance"
+description = "Official implementation of training-free hidden-state refinement for flow-matching image generators"
 requires-python = ">=3.10,<3.13"
+authors = [
+  { name = "Yuanyi Yan" },
+  { name = "Xinzhe Rao" },
+  { name = "Canyu Shen" },
+  { name = "Yang Chen" },
+  { name = "Yunlu Chen" },
+  { name = "Meng Tang" },
+  { name = "Teng Long" },
+  { name = "Vincent Tao Hu" },
+]
 dependencies = [
   "torch>=2.5,<2.7",
 ]
+
+[project.urls]
+Paper = "https://arxiv.org/abs/2608.29160"
+Homepage = "https://yuanyiyan.com/projects/looped-flow-matching"
+Repository = "https://github.com/a1443356159/looped-flow-matching"
 
 [project.optional-dependencies]
 media = ["Pillow==10.2.0"]
