@@ -7,6 +7,24 @@ WS="$SUE_DEEPRESEARCH_ROOT/workspace/looped-flow-matching"
 # SUE_SF_DIR to run an alternative checkout (e.g. the layer-wise
 # selected-layer stack loop tree) without touching the default one.
 SF="${SUE_SF_DIR:-$WS/Self-Forcing}"
+# An alternative checkout (SUE_SF_DIR) is a git clone, so it carries only
+# tracked source. The large non-git assets stay in the default tree and must be
+# reachable from the alternative one via symlinks. Fail loudly here with the
+# exact remediation rather than dying later inside an eval preflight (this cost
+# one full dryrun on 2026-09-15: the eval stage died on a missing
+# $SF/VBench/vbench/third_party/amt/cfgs/AMT-S.yaml).
+if [[ "$SF" != "$WS/Self-Forcing" ]]; then
+  for _sf_asset in VBench checkpoints wan_models; do
+    if [[ ! -e "$SF/$_sf_asset" && -e "$WS/Self-Forcing/$_sf_asset" ]]; then
+      echo "SF ASSET ERROR: $SF/$_sf_asset is not reachable." >&2
+      echo "  The alternative Self-Forcing checkout is missing a shared asset that" >&2
+      echo "  lives in the default tree. Fix it with:" >&2
+      echo "    ln -sfn ../Self-Forcing/$_sf_asset \"$SF/$_sf_asset\"" >&2
+      exit 2
+    fi
+  done
+  unset _sf_asset
+fi
 ENV_ROOT="$WS/scale_up_outputs/envs"
 V="$ENV_ROOT/miniconda3/envs/looped-self-forcing"
 OVERLAY="$ENV_ROOT/overlay310"
