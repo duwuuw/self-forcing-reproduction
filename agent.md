@@ -226,6 +226,28 @@ k2_l22_29 (R3, 22-29)         +0.1760
 工程结论：默认推荐 `K=2` + `layer_start=8, layer_end=15`；若要更强运动，把窗口扩到
 `16..23`，而不是继续加大 K，也不是继续向深层推。
 
+### 第四轮：layer-wise 代码迁移与 dryrun（2026-09-15）
+
+上游 `vibe-hust/self-forcing-reproduction@looped-self-forcing`（提交 `e1df619`
+"Implement selected layer stack loop"）是 layer-wise 版本：**选中的连续层区间作为一个
+loop body 整体重复 K 次**（`causal_model.py` 的 `run_block` + stack 循环），而不是旧的
+逐 block 各自循环 K 次。旧树 `Self-Forcing/` 与新树 `Self-Forcing-layerwise/` 与上游相比
+只有 11 个文件不同。
+
+- 新树以 submodule 形式挂在本仓库（见上方「提交到 GitHub」）。
+- NM5 上跑新树的开关是 `SUE_SF_DIR`（`_env.sh` 覆盖，`submit_search.sh` 显式透传）。
+- 新树是 git clone，缺 `VBench/`、`checkpoints/`、`wan_models/` 三个非 git 资产，已用
+  symlink 指向旧树复用（零拷贝）。**`_env.sh` 已加守卫**，缺资产时带修复命令 exit 2。
+- 教训全文见 `SCALE_UP.md` 的 "Search round 4" 一节。
+
+**dryrun 结论（run id `dryrun_r5_20260915`，已闭环）**：
+- 生成 job `45886786` `COMPLETED 0:0`（4:46），4 个 variant 各 1 个视频；
+  worker 日志确认走的是 `Self-Forcing-layerwise/`，`[TemporalLoop] K=2 layer_range=[...]` 正确。
+- eval job `45886787` `COMPLETED 0:0`（3:43），**4 个 variant 的 `metrics.json` 全部产出**，
+  层范围/K/prompt 数与各自配置一致。
+- 1-prompt 下 `dynamic_degree` 多为 0，是单样本选样现象，不是回归（与 R3 dryrun 同）。
+- **R4 fullrun `fullrun_r4_20260915`（生成 `45886006` / eval `45886007`）已提交，排队中。**
+
 ### Pipeline 状态与下一步
 
 - `sue-nm5-env-install` 与 `sue-dryrun` 均已按证据记录为 completed。
