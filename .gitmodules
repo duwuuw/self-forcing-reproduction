@@ -1,0 +1,4 @@
+[submodule "Self-Forcing-layerwise"]
+	path = Self-Forcing-layerwise
+	url = https://github.com/vibe-hust/self-forcing-reproduction
+	branch = looped-self-forcing

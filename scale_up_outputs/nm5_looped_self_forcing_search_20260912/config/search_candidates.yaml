@@ -1,0 +1,230 @@
+search:
+  objective: heuristic temporal-loop K and layer-range search on the fixed 128-prompt VBench-Long contract
+  max_k: 6
+  fixed_protocol:
+    prompt_manifest: prompts_selected_128.txt
+    seed: 0
+    num_output_frames: 123
+    fps: 16
+    use_ema: true
+    eval_dimensions:
+      - subject_consistency
+      - background_consistency
+      - motion_smoothness
+      - dynamic_degree
+      - aesthetic_quality
+      - imaging_quality
+  references:
+    - id: ref_k2_full_19_26
+      k_min: 2
+      k_max: 2
+      layer_start: 19
+      layer_end: 26
+      status: completed_previous_round
+    - id: ref_k1_k6_full_19_26
+      k_min: 1
+      k_max: 6
+      layer_start: 19
+      layer_end: 26
+      status: completed_previous_round
+  first_round:
+    - id: k1_full_19_26
+      k_min: 1
+      k_max: 1
+      layer_start: 19
+      layer_end: 26
+      rationale: minimum-K temporal-loop baseline under temporal_uniform scheduling
+    - id: k4_full_19_26
+      k_min: 4
+      k_max: 4
+      layer_start: 19
+      layer_end: 26
+      rationale: stronger fixed refinement without temporal growth
+    - id: k1_k4_full_19_26
+      k_min: 1
+      k_max: 4
+      layer_start: 19
+      layer_end: 26
+      rationale: moderate stepped temporal_uniform schedule versus the existing 1-to-6 reference
+    - id: k1_k6_late_23_26
+      k_min: 1
+      k_max: 6
+      layer_start: 23
+      layer_end: 26
+      rationale: late-block loop ablation to test layer placement and cost
+  next_round_candidates:
+    - id: k3_full_19_26
+      k_min: 3
+      k_max: 3
+      layer_start: 19
+      layer_end: 26
+      rationale: midpoint fixed-K probe
+    - id: k5_full_19_26
+      k_min: 5
+      k_max: 5
+      layer_start: 19
+      layer_end: 26
+      rationale: high fixed-K probe below the upper bound
+    - id: k6_full_19_26
+      k_min: 6
+      k_max: 6
+      layer_start: 19
+      layer_end: 26
+      rationale: maximum fixed-K stress point
+    - id: k1_k2_full_19_26
+      k_min: 1
+      k_max: 2
+      layer_start: 19
+      layer_end: 26
+      rationale: minimal non-degenerate linear growth
+    - id: k2_k6_full_19_26
+      k_min: 2
+      k_max: 6
+      layer_start: 19
+      layer_end: 26
+      rationale: elevated floor with full temporal growth
+    - id: k1_k6_early_19_22
+      k_min: 1
+      k_max: 6
+      layer_start: 19
+      layer_end: 22
+      rationale: early-block layer ablation paired with the late-block probe
+    - id: k1_k6_mid_21_24
+      k_min: 1
+      k_max: 6
+      layer_start: 21
+      layer_end: 24
+      rationale: middle-block layer ablation
+    - id: k2_late_23_26
+      k_min: 2
+      k_max: 2
+      layer_start: 23
+      layer_end: 26
+      rationale: fixed-K layer interaction probe
+    - id: k4_late_23_26
+      k_min: 4
+      k_max: 4
+      layer_start: 23
+      layer_end: 26
+      rationale: strong fixed-K late-layer probe
+    - id: k1_k4_late_23_26
+      k_min: 1
+      k_max: 4
+      layer_start: 23
+      layer_end: 26
+      rationale: moderate linear schedule with late layers only
+    - id: k1_k6_19_23
+      k_min: 1
+      k_max: 6
+      layer_start: 19
+      layer_end: 23
+      rationale: five-layer compromise between full and late ranges
+    - id: k1_k3_full_19_26
+      k_min: 1
+      k_max: 3
+      layer_start: 19
+      layer_end: 26
+      rationale: low-range temporal schedule
+    - id: k1_k5_full_19_26
+      k_min: 1
+      k_max: 5
+      layer_start: 19
+      layer_end: 26
+      rationale: high-range temporal schedule below the existing upper endpoint
+    - id: k2_k3_full_19_26
+      k_min: 2
+      k_max: 3
+      layer_start: 19
+      layer_end: 26
+      rationale: elevated-floor low-range schedule
+    - id: k2_k4_full_19_26
+      k_min: 2
+      k_max: 4
+      layer_start: 19
+      layer_end: 26
+      rationale: elevated-floor moderate schedule
+    - id: k2_k5_full_19_26
+      k_min: 2
+      k_max: 5
+      layer_start: 19
+      layer_end: 26
+      rationale: elevated-floor high-range schedule
+    - id: k3_k4_full_19_26
+      k_min: 3
+      k_max: 4
+      layer_start: 19
+      layer_end: 26
+      rationale: mid-range narrow schedule
+    - id: k3_k5_full_19_26
+      k_min: 3
+      k_max: 5
+      layer_start: 19
+      layer_end: 26
+      rationale: mid-range high schedule
+    - id: k3_k6_full_19_26
+      k_min: 3
+      k_max: 6
+      layer_start: 19
+      layer_end: 26
+      rationale: mid-floor maximum schedule
+    - id: k4_k5_full_19_26
+      k_min: 4
+      k_max: 5
+      layer_start: 19
+      layer_end: 26
+      rationale: high-floor narrow schedule
+    - id: k4_k6_full_19_26
+      k_min: 4
+      k_max: 6
+      layer_start: 19
+      layer_end: 26
+      rationale: high-floor maximum schedule
+    - id: k5_k6_full_19_26
+      k_min: 5
+      k_max: 6
+      layer_start: 19
+      layer_end: 26
+      rationale: near-maximum schedule
+  round3_depth_sweep:
+    objective: >-
+      Isolate the effect of loop depth. Every earlier candidate confined the
+      temporal loop to layers 19-26 (63-90% of a 30-layer Wan2.1-T2V-1.3B), so
+      the rest of the depth was untested. Round 1 showed depth matters far more
+      than K (a 1-to-6 ramp on 23-26 costs -0.0094 dynamic_degree versus -0.0203
+      on 19-26), so this round holds K fixed and moves the window instead.
+    design:
+      k_min: 2
+      k_max: 2
+      schedule: temporal_uniform
+      strength: 1.0
+      note: >-
+        Constant K=2 is the gentlest genuine loop, so window differences are not
+        confounded by K magnitude. No k_min == k_max == 1 arm: under strength
+        1.0 that degenerates to x = B(x) and is the loop-off baseline, already
+        measured as k1_full_19_26 and not worth re-running.
+    model_depth_layers: 30
+    arms:
+      - id: k2_l00_07
+        k_min: 2
+        k_max: 2
+        layer_start: 0
+        layer_end: 7
+        rationale: earliest 27% of depth; never looped before
+      - id: k2_l08_15
+        k_min: 2
+        k_max: 2
+        layer_start: 8
+        layer_end: 15
+        rationale: 27-53% of depth; never looped before
+      - id: k2_l16_23
+        k_min: 2
+        k_max: 2
+        layer_start: 16
+        layer_end: 23
+        rationale: 53-80% of depth; brackets the low end of the incumbent 19-26 band
+      - id: k2_l22_29
+        k_min: 2
+        k_max: 2
+        layer_start: 22
+        layer_end: 29
+        rationale: 73-100% of depth; includes the final layers, brackets the high end of the incumbent band
