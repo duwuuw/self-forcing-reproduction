@@ -15,7 +15,16 @@
 
 ### 提交到 GitHub（强制要求，优先于其他收尾动作）
 
-远端：`https://github.com/a1443356159/looped-flow-matching`（branch `main`）。
+**推送目标（已配置好，直接 `git push` 即可）**
+
+- 远端 `mine` = `https://github.com/duwuuw/self-forcing-reproduction`，
+  本地 `main` 映射到远端分支 `looped-flow-matching`；
+  `branch.main.pushRemote=mine` + `remote.mine.push=refs/heads/main:refs/heads/looped-flow-matching`
+  已写入`.git/config`（**本地配置，不随仓库共享，换机器要重设**）。
+- 远端 `origin` = `https://github.com/a1443356159/looped-flow-matching` 当前账号
+  （`duwuuw`）**只有 READ 权限，推送会 403**，保留它仅用于 fetch。
+- `mine` 上的 `github-upload` 分支是一份**独立的 Self-Forcing 复现源码树**
+  （含 `vbench_assets/`），与本工作区历史无关，**绝对不要 force 覆盖它**。
 
 - **每当出现新的可提交修改（代码、脚本、配置、launcher、文档），就立即 commit + push。
   不要攒批，不要等用户提醒。** 跑完一轮实验、改完一个 launcher、更新完本文件，都算一次。
