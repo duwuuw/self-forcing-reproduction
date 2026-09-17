@@ -1,6 +1,6 @@
 # agent.md — looped-flow-matching / Temporal Loop 代码定位
 
-记录时间：2026-09-13 04:17 UTC（最后更新：2026-09-15 06:48 UTC，加入第三轮结果）
+记录时间：2026-09-13 04:17 UTC（最后更新：2026-09-17 05:47 UTC，加入第四轮 fullrun 结果）
 
 ## 当前接管交接（优先于下方历史记录）
 
@@ -9,9 +9,10 @@
 本节是本轮运行的最新状态；下方涉及 40 秒、162 latent frames 或旧实验的内容均为
 历史资料，不能覆盖本节的硬约束。
 
-**最新状态（2026-09-15 06:48 UTC）：R1/R2/R3 三轮共 12 个候选全部跑完并完成收尾，
-没有待提交作业。搜索结论见下方「十二配置合并结论」——最不伤动作的深度区间是
-`layer_start=8, layer_end=15`（K=2）。**
+**最新状态（2026-09-17 05:47 UTC）：R1–R4 四轮共 16 个候选全部跑完并完成收尾，
+没有待提交作业。搜索结论见下方「十六配置合并结论」——最不伤动作的深度区间是
+`layer_start=8, layer_end=15`（K=2），且该结论在 per-block（R3）与 stack（R4）
+两种 loop 算子语义下都成立。**
 
 ### 提交到 GitHub（强制要求，优先于其他收尾动作）
 
@@ -188,43 +189,52 @@ aesthetic 0.5412 / imaging 0.7027。
 - `k2_l16_23` 用 −0.0339 aesthetic 换 +0.0531 dynamic，若要有意增强运动可用；
   `k2_l22_29` 的 +0.1760 dynamic 代价过大（imaging −0.1693），不建议。
 
-### 十二配置合并结论
+### 十六配置合并结论
 
 `dynamic_degree` 相对关循环 baseline（`k1_full_19_26` = 0），从小到大：
 
 ```text
-k1_full_19_26 (K=1, 关循环)     0           ← 关循环 baseline
-k1_k6_late_23_26              -0.0094      ← 全轮最好：4 层窄 ramp，K 多为 1
-k1_k4_full_19_26              -0.0203
-k2_l08_15 (R3, 8-15)          -0.0370      ← R3 最好；唯一五维不劣于 baseline
-k2_k6_full_19_26              -0.0547
-k5_full_19_26                 -0.0693
-k3_full_19_26                 -0.0750
-k6_full_19_26                 -0.0760
-k4_full_19_26                 -0.0786
-k2_l00_07 (R3, 0-7)           -0.3422      ← 最差：把运动冻住
+k2_l00_07 (R3 per-block, 0-7)      -0.3422   ← 全轮最差：把运动冻住
+k2_s00_07 (R4 stack,     0-7)      -0.1984   ← 同窗口换 stack 语义，损失减半
+k4_full_19_26                      -0.0786
+k6_full_19_26                      -0.0760
+k3_full_19_26                      -0.0750
+k5_full_19_26                      -0.0693
+k2_k6_full_19_26                   -0.0547
+k2_l08_15 (R3 per-block, 8-15)     -0.0370
+k2_s08_15 (R4 stack,     8-15)     -0.0240   ← 两种语义都最好；唯一五维不劣于 baseline
+k1_k4_full_19_26                   -0.0203
+k1_k6_late_23_26                   -0.0094   ← 全轮 dynamic 损失最小：4 层窄 ramp，K 多为 1
+k2_s16_23 (R4 stack,     16-23)    -0.0068
+k1_full_19_26 (K=1, 关循环)         0        ← 关循环 baseline
 --- 以下 dynamic 高于 baseline ---
-k2_l16_23 (R3, 16-23)         +0.0531
-k2_l22_29 (R3, 22-29)         +0.1760
+k2_l16_23 (R3 per-block, 16-23)    +0.0531
+k2_s22_29 (R4 stack,     22-29)    +0.0656   ← 画质崩坏后的伪运动（imaging -0.4585）
+k2_l22_29 (R3 per-block, 22-29)    +0.1760
 ```
 
-四条可写进论文的结论（第 1 条已按 R3 数据修正）：
+四条可写进论文的结论（第 1、3 条已在 R4 上复现并加固）：
 
-1. **"looped 配置在任何一维都不如关循环 baseline"只对 R1/R2 的 8 个配置成立，R3 推翻了
-   它。** `k2_l08_15` 在 subject/background/motion/aesthetic/imaging 五维上都不低于
-   baseline，`k2_l16_23`、`k2_l22_29` 的 dynamic 更是高于 baseline。正确的表述是：
-   **loop 的代价不是必然的，而是由 loop 所在的深度区间决定的。**
-2. **层范围（深度）比 K 重要；R3 给出了最强证据。** 固定 K=2、固定 8 层宽，仅平移窗口
-   就让 dynamic 从 0.0333 变到 0.5516；横跨 R1–R3，深度带来的动态差异
-   （−0.3422 ~ +0.1760）远大于 K 从 2 到 6 带来的差异（−0.037 ~ −0.079）。
-3. **深度对运动单调、方向与质量相反。** 前段层（0–7）抑制运动，后段层（22–29）放大
-   运动；但后段放大运动的同时 aesthetic/imaging 塌陷。**中间段 8–15 是唯一两头都不亏
-   的区间。**
+1. **"looped 配置在任何一维都不如关循环 baseline"只对 R1/R2 的 8 个配置成立，R3 与 R4
+   都推翻了它。** `k2_l08_15`、`k2_s08_15` 在 subject/background/motion/aesthetic/imaging
+   五维上都不低于 baseline。正确的表述是：**loop 的代价不是必然的，而是由 loop 所在的
+   深度区间决定的。**
+2. **层范围（深度）比 K 重要；两种算子语义下都成立。** 固定 K=2、固定 8 层宽，仅平移窗口
+   就让 dynamic 从 0.1771 变到 0.4411（R4）/ 0.0333 变到 0.5516（R3）；跨 R1–R4，深度
+   带来的动态差异（−0.3422 ~ +0.1760）远大于 K 从 2 到 6 带来的差异（−0.037 ~ −0.079）。
+3. **深度对运动单调、方向与质量相反；R4 进一步证明"深层高 dynamic"是伪信号。**
+   前段层抑制运动，后段层放大运动；但后段放大运动的同时 aesthetic/imaging 塌陷，
+   且 **stack 语义下 22–29 的 imaging 掉到 −0.4585**。**中间段 8–15 是唯一两头都不亏
+   的区间，这一点在 per-block 与 stack 两种语义下都成立。**
 4. **K 的代价在 K≈3 之后饱和。** 固定 K 的 k3/k4/k5/k6 都聚在 −0.069 ~ −0.079，
    再增大 K 不会显著更差；ramp 型（`k1_k4`、`k2_k6`）一致优于同量级的固定 K。
+5. **算子语义（per-block vs stack）只改两端，不改中段结论。** 8–15 在两语义下都最好；
+   stack 在前段更温和（0–7 损失减半）、在后段更凶（22–29 imaging 恶化 2.7 倍），
+   16–23 分歧最大（imaging −0.0046 → −0.1460）。
 
 工程结论：默认推荐 `K=2` + `layer_start=8, layer_end=15`；若要更强运动，把窗口扩到
-`16..23`，而不是继续加大 K，也不是继续向深层推。
+`16..23`，而不是继续加大 K，也不是继续向深层推。**若只看 dynamic 数值会误选 22–29
+（R4 甚至为正），必须同时看 imaging/aesthetic。**
 
 ### 第四轮：layer-wise 代码迁移与 dryrun（2026-09-15）
 
@@ -246,7 +256,55 @@ loop body 整体重复 K 次**（`causal_model.py` 的 `run_block` + stack 循�
 - eval job `45886787` `COMPLETED 0:0`（3:43），**4 个 variant 的 `metrics.json` 全部产出**，
   层范围/K/prompt 数与各自配置一致。
 - 1-prompt 下 `dynamic_degree` 多为 0，是单样本选样现象，不是回归（与 R3 dryrun 同）。
-- **R4 fullrun `fullrun_r4_20260915`（生成 `45886006` / eval `45886007`）已提交，排队中。**
+**R4 fullrun 结果（run id `fullrun_r4_20260915`，2026-09-17 05:47 UTC 收尾）**：
+生成 job `45886006` `COMPLETED 0:0`（2:22:32），4 个 variant 各 **128/128**；
+packed eval job `45886007` `COMPLETED 0:0`（3:49:34），4 个 `metrics.json` 全部产出
+（写入 09-16 19:33–20:29）。`finalize_variant_evals.py` 与 `reduce_vbench_history.py`
+均 `EXIT=0`。**eval 起初申请了 24 h wall time 而长时间 `PENDING/Priority`；就地
+`scontrol update jobid=45886007 TimeLimit=05:00:00` 把 backfill 窗口从 24 h 缩到 5 h 后
+才拿到节点**（实测只需 3:49，见下方"排队教训"）。
+
+VBench-Long 六维绝对值，括号内为相对关循环 baseline `k1_full_19_26`
+（`fullrun_r1_20260913`）的差值：
+
+| variant | loop 层（零基闭区间） | subject | background | motion | dynamic | aesthetic | imaging |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `k2_s00_07` | 0..7 | 0.9445 (−0.0276) | 0.9504 (−0.0122) | 0.9895 (+0.0036) | **0.1771 (−0.1984)** | 0.4560 (−0.0851) | 0.5569 (−0.1458) |
+| `k2_s08_15` | 8..15 | 0.9795 (+0.0073) | 0.9651 (+0.0026) | 0.9864 (+0.0006) | **0.3516 (−0.0240)** | 0.5397 (−0.0015) | 0.7055 (+0.0028) |
+| `k2_s16_23` | 16..23 | 0.9639 (−0.0083) | 0.9548 (−0.0078) | 0.9907 (+0.0049) | **0.3688 (−0.0068)** | 0.5051 (−0.0360) | 0.5567 (−0.1460) |
+| `k2_s22_29` | 22..29 | 0.9071 (−0.0650) | 0.9485 (−0.0141) | 0.9892 (+0.0033) | **0.4411 (+0.0656)** | 0.3357 (−0.2055) | 0.2442 (−0.4585) |
+
+关键读数：
+
+- **`k2_s08_15` 再次是唯一五维不低于 baseline 的窗口**（subject/background/motion/imaging
+  为正，aesthetic 仅 −0.0015），dynamic 只掉 −0.0240。**R3 的结论在 stack 语义下复现。**
+- dynamic 仍随深度单调递增（0.1771 → 0.3516 → 0.3688 → 0.4411），但 **stack 语义把前段的
+  运动损失砍掉近一半**：0–7 从 R3 的 −0.3422 收窄到 −0.1984。
+- **stack 语义显著放大深层质量塌陷**：22–29 的 imaging 从 R3 的 −0.1693 恶化到 −0.4585，
+  aesthetic 从 −0.0925 到 −0.2055。该窗口 dynamic 高于 baseline（+0.0656）是画质崩坏后的
+  伪运动，**不是收益，不能据此推荐深层**。
+- **16–23 是两种语义分歧最大的窗口**：imaging 在 R3 几乎无损（−0.0046），在 R4 掉 −0.1460。
+
+语义对比（Δ vs baseline，同 K=2、同四窗口，唯一变量是 loop 算子）：
+
+```text
+窗口      R3 per-block（逐 block 各循环 K 次）   R4 stack（整个层区间作 loop body）
+0-7       dyn −0.3422   img −0.1041             dyn −0.1984   img −0.1458
+8-15      dyn −0.0370   img +0.0006             dyn −0.0240   img +0.0028   ← 两种语义都最好
+16-23     dyn +0.0531   img −0.0046             dyn −0.0068   img −0.1460
+22-29     dyn +0.1760   img −0.1693             dyn +0.0656   img −0.4585
+```
+
+- **"最不伤动作的深度区间"这一结论对算子语义稳健**：两种语义下 8–15 都同时保住 dynamic
+  与画质；差异只出现在两端（前段 stack 更温和，后段 stack 更凶）。
+- 若只看 dynamic 数值会误选 22–29（R4 甚至为正）；**必须同时看 imaging/aesthetic**，
+  否则会把画质崩坏读成运动增强。
+
+`artifacts/eval_results_history.md` 现状：**R4 收尾时发现该文件在 NM5 与本地都不存在，
+agent.md 早前"R3 已写出该文件"的记录与实际不符。** 已用各轮留存的 `metrics.json`
+重建并补齐 **R1–R4 全部 16 条**（`eval:<run_id>:<variant>` 标记各 1 条，188 行），
+并已 scp 回本地 bundle。若后续再出现"收尾脚本报 EXIT=0 但产物找不到"的情况，
+先 `find` 确认路径再信任记录。
 
 ### Pipeline 状态与下一步
 
@@ -256,7 +314,7 @@ loop body 整体重复 K 次**（`causal_model.py` 的 `run_block` + stack 循�
   `readiness/readiness_nm5.json` → `status=ready`、`fullrun_ready=true`；
   `artifacts/experiment_results.csv` 已有 4 行 `status=completed`，W&B offline run id
   分别为 `08ujo6tt` / `6ibvkpbk` / `mp2whe4z` / `g840o4kd`。
-- **三轮 fullrun 均已结束**（核验时间 2026-09-15 06:48 UTC；`squeue` 中该账号残留的
+- **四轮 fullrun 均已结束**（核验时间 2026-09-17 05:47 UTC；`squeue` 中该账号残留的
   PD 作业属于其他项目，与本 run 无关）：
   - R1 `fullrun_r1_20260913`：4 配置，128/128，生成与 packed eval 完成。
   - R2 `fullrun_r2_20260913`：generation job `45825388`、packed eval `45825389`，
@@ -264,15 +322,24 @@ loop body 整体重复 K 次**（`causal_model.py` 的 `run_block` + stack 循�
   - R3 `fullrun_r3_20260914`：4 个 1-GPU eval 作业 `45861588` / `45861589` /
     `45861590` / `45861591` 全部 `COMPLETED`、`ExitCode 0:0`；
     `variants/<v>/eval/metrics.json` 4 个齐全。
-- **R3 收尾已执行**（NM5 登录节点，两步均 `EXIT=0`）：
+  - R4 `fullrun_r4_20260915`：generation job `45886006` `COMPLETED 0:0`（2:22:32）、
+    packed eval `45886007` `COMPLETED 0:0`（3:49:34）；4 个 `metrics.json` 齐全。
+- **R3 收尾已执行**（NM5 登录节点，`EXIT=0`）：
   `scripts/finalize_variant_evals.py --exp-dir <exp> --run-id fullrun_r3_20260914
   --mode fullrun --variants k2_l00_07 k2_l08_15 k2_l16_23 k2_l22_29
-  --reference k1_full_19_26 --reference-run-id fullrun_r1_20260913`，然后
-  `scripts/reduce_vbench_history.py`。写出
-  `fullrun_r3_20260914/run_state/eval_complete.json`，并在
-  `artifacts/eval_results_history.md` 追加 4 条 `eval:fullrun_r3_20260914:*` 标记。
-- NM5 上的 `artifacts/eval_results_history.md` 与 `experiment_results.csv` 已同步回本地
-  bundle。**R1/R2/R3 共 12 个候选已全部测完，不要再提交任何作业。**
+  --reference k1_full_19_26 --reference-run-id fullrun_r1_20260913`，写出
+  `fullrun_r3_20260914/run_state/eval_complete.json`。
+  ⚠️ **本文件此前记录的"R3 已写出 `artifacts/eval_results_history.md`"经 2026-09-17
+  核查为不实**——该文件当时在 NM5 与本地均不存在。
+- **R4 收尾已执行**（NM5 登录节点，`finalize` 与 `reduce` 均 `EXIT=0`）：
+  `finalize_variant_evals.py --run-id fullrun_r4_20260915 --variants k2_s00_07
+  k2_s08_15 k2_s16_23 k2_s22_29 --reference k1_full_19_26
+  --reference-run-id fullrun_r1_20260913`，写出
+  `fullrun_r4_20260915/run_state/eval_complete.json`；随后 `reduce_vbench_history.py`
+  写入 history。**并已用各轮留存的 `metrics.json` 回填 R1–R3，使 history 恢复为
+  R1–R4 全部 16 条**（188 行），文件已 scp 回本地 bundle。
+- `artifacts/experiment_results.csv` 需按 R4 结果补 4 行（见「实验结果 CSV Ledger」）。
+  **R1–R4 共 16 个候选已全部测完，不要再提交任何作业。**
 - fullrun 完成判据：`<run>/run_state/generation_complete.json` 与 `eval_complete.json`、
   `variants/<v>/eval/metrics.json`、`artifacts/experiment_results.csv` 新增 4 行、
   `artifacts/eval_results_history.md` 更新。
