@@ -1,9 +1,0 @@
-accelerate==1.14.0
-bitsandbytes==0.49.2
-huggingface-hub>=0.28,<2
-safetensors==0.8.0
-sentencepiece==0.2.1
-protobuf==7.35.1
-transformers==5.12.1
-# Exact source revision recorded by the reported FLUX.2 environment.
-diffusers @ git+https://github.com/huggingface/diffusers.git@bd2c91958881b777260eedb1c3d61d01c03e800f
