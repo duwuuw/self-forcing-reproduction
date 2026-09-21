@@ -89,6 +89,15 @@ Workspace-specific lessons. Generic cross-workspace lessons live in
 - **correct**: Require `*_eval_results.json` and `*_full_info.json`, then validate all six requested dimension keys in the aggregate JSON before writing metrics and ledger records.
 - **source**: workspace/looped-flow-matching
 
+### Keep NM5 path checks and generated reports shell-safe
+- **sandbox**: NM5
+- **session**: dryrun
+- **date**: 2026-09-21
+- **trigger**: The NM5 workspace is exposed through a logical path whose physical path differs, and an unquoted report heredoc executed Markdown backticks while generating the dryrun benchmark.
+- **wrong**: Compare `pwd -P` directly with the logical `$NM5_DEEPRESEARCH_ROOT` path, invoke the child launcher through another login shell, or generate Markdown with an unquoted heredoc.
+- **correct**: Compare canonicalized paths with `realpath -e`, keep the child launcher a plain `bash` invocation, quote report heredocs, and checksum the synchronized report. These checks protect the run contract without changing training semantics.
+- **source**: workspace/looped-flow-matching
+
 ## Fullrun
 
 ### Make multi-file source sync fail closed
@@ -112,7 +121,7 @@ written without re-reading this file.
 - **session**: dryrun
 - **date**: 2026-09-13
 - **trigger**: `dryrun_r1_20260913` generation job 45808484 died in 35 s with
-  `/scratch/slurm/job45808484/common_env.sh: No such file or directory`. Slurm
+  `<SLURM_SPOOL_ROOT>/job<N>/common_env.sh: No such file or directory`. Slurm
   copies the batch script into a per-job spool directory before running it, so
   `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` resolves to the
   spool dir, not the durable bundle.
@@ -319,3 +328,274 @@ burns its queue slot. Verified all three branches: alternative tree passes,
 default tree passes, missing asset exits 2 with the fix printed.
 
 - **source**: workspace/looped-flow-matching
+
+## Training stage — block-wise LoRA DMD on NM5 (2026-09-18)
+
+### `rsync` without `-a` skips every file and still exits 0
+
+- **sandbox**: NM5
+- **date**: 2026-09-18
+- **trigger**: The first attempt to move the 57 GB Wan2.1-T2V-14B teacher to NM5
+  ran `rsync --partial --inplace --info=progress2 <src>/ <dst>` (no `-a`). rsync printed
+  `skipping directory .` and `(xfr#0, to-chk=0/0)`, created the destination directory,
+  transferred **nothing**, and exited **0**. The wrapper's `RSYNC_EXIT=0` looked like success
+  while `du -sh` on the destination showed an empty directory.
+- **wrong**: Assuming `--partial --inplace` implies "transfer files". Without `-a`/`-r`
+  rsync refuses to recurse and treats the source as a single non-regular entry.
+- **correct**: Always use `rsync -a --partial --timeout=300` for asset transfer, and
+  **verify the destination byte size** (`du -sb`) before trusting the exit code. This is the
+  transfer-layer version of the existing "`EXIT=0` ≠ artifacts exist" lesson (§6.2).
+- **source**: workspace/looped-flow-matching, 14B teacher staging 2026-09-18
+
+### `nm5-transfer` shares GPFS with the compute cluster
+
+- **sandbox**: NM5
+- **date**: 2026-09-18
+
+`nm5-transfer` mounts the same NM5 scratch, project, and home roots as the
+compute/login nodes. So `rsync` to a path under `NM5_TRANSFER_SSH` lands **directly** where
+`nm5` compute nodes see it — no second hop, no staging copy. Measured **~30 MB/s**
+(57 GB in ~31 min); a 2 GB single-file probe hit ~160 MB/s, so the sustained rate over a
+multi-file run is roughly a fifth of the burst rate.
+
+This also resolves the apparent contradiction in `config_nm5.txt`'s route note: the local
+control plane *can* ssh to the login node directly, but bulk data goes through the transfer
+host. Use the transfer host for data, the login host for `sbatch` — and `--timeout=300`
+so a stalled rsync fails instead of hanging forever.
+
+### A hardcoded `wandb.init(mode="online")` cannot be overridden by `WANDB_MODE=offline`
+
+- **sandbox**: NM5
+- **date**: 2026-09-18
+- **trigger**: `Self-Forcing-blockwise/trainer/distillation.py:58-67` calls
+  `wandb.login(host=config.wandb_host, key=config.wandb_key)` then
+  `wandb.init(..., mode="online", ...)`. On NM5 (no egress) the run hung on the W&B service
+  handshake and produced **no** offline run directory; `wandb.login(host="WANDB_HOST")` raised a
+  pydantic `ValidationError` and persisted the literal string as a global `base_url`.
+- **wrong**: Believing `WANDB_MODE=offline` in the environment is enough. An explicit `mode=`
+  **kwarg outranks the env var** (wandb `Source.INIT` > `Source.ENV`), so the env var is dead
+  weight. Verified: `WANDB_MODE=offline` + `wandb.init(mode="online")` → hang, no artifacts;
+  `wandb.init(mode="offline")` alone → real `offline-run-*` + `.wandb` file.
+- **correct**: Recognise this as a *core-interface* conflict, not a launcher bug. Do **not**
+  patch the branch (it must stay byte-identical at its pinned commit) and do **not** fall back
+  to `--disable-wandb` when `runtime.yaml.wandb_policy` says `mode: offline, required: true`.
+  Put a sidecar wrapper in editable project code (`<ws>/scripts/train_*.py`) that forces
+  `mode="offline"`, skips `wandb.login`, asserts the patch actually landed on
+  `trainer.distillation.wandb`, and then delegates to the branch's own entry point. Use the
+  **same** wrapper for dryrun and fullrun so the dryrun is not taking a shortcut the fullrun cannot.
+- **source**: workspace/looped-flow-matching, 2026-09-18
+
+### A strict `load_state_dict` makes "which checkpoint" a code question, not a config question
+
+- **sandbox**: NM5
+- **date**: 2026-09-18
+
+Before changing a `*_ckpt:` field, dump the checkpoint's **top-level key** with
+`torch.load(p, map_location="cpu", weights_only=True, mmap=True)` — it is cheap (lazy, no
+materialisation) and answers the question definitively. Here `ode_init.pt` is
+`{"generator": …}` while `self_forcing_dmd.pt` is `{"generator_ema": …}`, and
+`model/base.py:80-96` only unwraps `"generator"` / `"model"` before
+`load_state_dict(..., strict=True)`. The inner 825 `model.*` keys are identical, so the swap
+looked like a one-line config edit and is actually a guaranteed `RuntimeError`. Every other
+loader in the repo (`inference.py:83`, `demo.py:125`) unwraps `generator_ema` explicitly —
+grep for the *other* loaders of the same file before assuming a loader handles it.
+- **source**: workspace/looped-flow-matching, 2026-09-18
+
+### Keep the training corpus guard in the launcher, not in prose
+
+- **sandbox**: NM5
+- **date**: 2026-09-18
+
+Training must not reuse the evaluation prompt sets. The preset already points at a
+non-VBench corpus (`prompts/vidprom_filtered_extended.txt`, 248,221 lines, zero `vbench`
+mentions), but that is an accident of the preset rather than a guarantee. `sue_train_preflight`
+now fails closed when the resolved `data_path` contains `vbench`, when it does not exist, or
+when it has fewer than 1000 non-empty prompts — the last check because
+`DistributedSampler(drop_last=True)` over 4 ranks with a tiny corpus yields zero batches and
+`cycle()` then busy-spins forever instead of raising.
+- **source**: workspace/looped-flow-matching, 2026-09-18
+
+### A smoke that fails is still the point — record what it PROVED before what it broke
+
+- **sandbox**: NM5
+- **date**: 2026-09-18
+
+The first GPU run of `Self-Forcing-blockwise` (`46100510`) failed after 8:31 with zero
+training steps. It was still a high-value run because the log proves the *whole surrounding
+stack* is correct: 4× H100 allocated, the 55.8 GB 14B teacher plus student/critic/T5/VAE
+**constructed and loaded without OOM**, the branch's own preflight returned
+`training preflight passed`, the offline W&B run directory was produced, and LoRA landed on
+exactly `blocks.{8..15}.self_attn.{q,v}` (32 tensors, matching the `layer_start/end` contract).
+Say that part first — it separates "our harness is broken" from "their code is broken", and
+only the second one needs to go back to the author.
+
+### Deterministic-looking torch.checkpoint failures: check all ranks before blaming a race
+
+- **sandbox**: NM5
+- **date**: 2026-09-18
+
+`CheckpointError: A different number of tensors was saved during the original forward and
+recomputation (forward: 82, recomputation: 72)` appeared on all four ranks with identical
+numbers. `grep -c` per rank is the cheap discriminator: identical counts on every rank mean
+**deterministic control-flow divergence inside the checkpointed region**, not a distributed
+race. Only then look for a mutable Python object read inside the checkpointed function whose
+state changes between the forward and the backward recompute — here `KVCacheCheckpointState`
+(`wan/modules/causal_model.py:930-980`), which is committed after the checkpoint returns.
+
+### Disabling activation checkpointing is not a fallback when the GPU is smaller than reference
+
+- **sandbox**: NM5
+- **date**: 2026-09-18
+
+NM5's H100 reports `65247 MiB` / `63.29 GiB` usable — about **21% less** than the standard
+80 GB H100 the upstream reference run used. When the checkpointed path fails, the obvious
+"just turn checkpointing off" diagnostic is worth exactly one run: here it converted the
+`CheckpointError` into `torch.OutOfMemoryError` (63.26 of 63.29 GiB consumed in
+`utils/temporal_loop.py:247`) *before the backward even started*. Two runs then bound the
+problem tightly — checkpointing is memory-required, and the memory-required path is the one
+that is broken — which is a much stronger statement to hand back than either failure alone.
+Also worth doing before choosing an isolation variable: confirm whether the *upstream
+actually-run* preset shares the setting being varied (`self_forcing_dmd.yaml` also had
+`gradient_checkpointing: true`, but no `temporal_loop`/`lora`), which localises the defect to
+the newly added code rather than the shared configuration.
+
+### A string override to a boolean config key silently does nothing
+
+- **sandbox**: NM5
+- **date**: 2026-09-18
+
+Deriving a diagnostic config with a generic `str` cast produced `gradient_checkpointing: 'false'`
+— a non-empty **string**, which is truthy in Python, so `torch.is_grad_enabled() and
+self.gradient_checkpointing` would have stayed `True` and the run would have reproduced the
+original failure while the config claimed otherwise. Any CLI/config override written to YAML
+must parse to the real type (`_as_bool`), and the derived file should be diffed against the
+preset to confirm the effective value, not just that the write succeeded.
+- **source**: workspace/looped-flow-matching, 2026-09-18
+
+## Training stage — getting a never-run-on-GPU branch to actually train (2026-09-19)
+
+> The lessons below are generic rather than workspace-specific, so they are **also
+> recorded in the project-level `memory/sue/SCALE_UP.md`** (section "Bringing a
+> never-run-on-GPU training branch up on a 4-GPU node"). Keep the two in step; this
+> copy is the workspace-local view.
+
+### Read the branch's OWN validator before writing a guard for its invariants
+
+- **sandbox**: NM5
+- **date**: 2026-09-19
+- **trigger**: Shortening `num_training_frames` 21 -> 15 while leaving
+  `training_gradient_window_frames` at 21 looked semantically safe ("window >=
+  length keeps every chunk graded"), so the preflight guard was written to
+  reject `window < frames`. The run got a node, loaded the 14B teacher, injected
+  LoRA, and only then died inside the first generator loss with
+  `ValueError: training_gradient_window_frames cannot exceed num_training_frames`
+  (`pipeline/self_forcing_training.py:93`) — the branch rejects the *opposite*
+  inequality.
+- **wrong**: Inferring another project's invariant direction from first
+  principles and guarding only that direction. A guard that encodes the wrong
+  direction is worse than no guard: it certifies a config the target itself
+  refuses.
+- **correct**: `grep` the target for the invariant's error string first
+  (`grep -rn "cannot exceed" .`) and mirror it exactly. Also note the failure
+  was *cheap to catch locally* — `pipeline/self_forcing_training.py` validates in
+  `__init__`, and `train.py --preflight` does not cover it, so a 20-line local
+  probe of the pipeline constructor would have caught it without a GPU slot.
+- **source**: workspace/looped-flow-matching, job 46163385
+
+### `ncclUnhandledCudaError` is often just OOM wearing a costume
+
+- **sandbox**: NM5
+- **date**: 2026-09-19
+- **trigger**: A run died with `torch.distributed.DistBackendError: NCCL error
+  ... unhandled cuda error`. The immediately preceding change had added
+  `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, so the flag was blamed and
+  removed as a "known NCCL hazard". The next run then hit a plain
+  `torch.OutOfMemoryError` in the same phase.
+- **wrong**: Reading only the exception *type* line. NCCL's own detail lines read
+  `ncclUnhandledCudaError: Call to CUDA function failed.  Last error: Cuda
+  failure 2 'out of memory'` — the allocator was the problem all along, and
+  `expandable_segments` is precisely the remedy for it.
+- **correct**: Always read the tail of a NCCL error block (`Last error:`) before
+  attributing it to a configuration flag, and look for "reserved by PyTorch but
+  unallocated" in OOM messages — that number is fragmentation, and
+  `expandable_segments:True` reclaims it. Reverting a flag on a misread costs a
+  slot and sends the investigation the wrong way.
+- **source**: workspace/looped-flow-matching, jobs 46123949 / 46164079
+
+### Keep the branch pristine by patching upstream defects from a sidecar wrapper
+
+- **sandbox**: NM5
+- **date**: 2026-09-19
+
+When a checkout must stay byte-identical at a pinned commit but is not runnable
+as-is, put every fix in one out-of-tree entry point that imports the branch's own
+module and then delegates to its `main()`. Each patch must **assert it landed**
+rather than assume (`if distillation.wandb.init is not offline_init: raise`), so
+a future refactor fails loudly instead of silently training with the old
+behaviour. Two worked examples here:
+
+- **Offline W&B**: `trainer/distillation.py` hardcodes
+  `wandb.init(..., mode="online", ...)`; an explicit `mode=` kwarg outranks
+  `WANDB_MODE=offline`, so the env var is dead weight and the run hangs on a
+  no-egress node. Patch `wandb.init`/`wandb.login` in the module namespace.
+- **Checkpoint replay determinism**: `WanT2VCrossAttention.forward` flips
+  `crossattn_cache["is_init"]` *inside* the block wrapped by
+  `torch.utils.checkpoint(..., use_reentrant=False)`; the backward recomputation
+  then takes the cached branch and skips the K/V projections, so the two passes
+  save different tensor counts and torch raises `CheckpointError`. Forcing the
+  flag falsy before each call makes both passes run the same op set — the K/V are
+  a pure function of `context`, so this is exact, not approximate.
+
+A useful extra: have the wrapper print one audit line per FSDP unit
+(`params=X.XX B cpu_offload=True/False`) so "the offload is configured" becomes
+"the offload is observed".
+- **source**: workspace/looped-flow-matching, jobs 46100510 / 46123949 / 46164079
+
+### `acc_debug` is one job per *Slurm user*, and collaborators share the user
+
+- **sandbox**: NM5
+- **date**: 2026-09-19
+- **trigger**: `sbatch` returned `QOSMaxSubmitJobPerUserLimit` on the `acc_debug`
+  QoS. The holder was `adapt-bench`, an entirely different
+  project's job — but submitted under the same Unix user (the account is shared
+  and job-name prefixes, not Unix users, distinguish owners).
+- **correct**: Treat the debug QoS slot as shared infrastructure. Do not cancel
+  someone else's job to free it; submit on `acc_ehpc` instead (100x lower
+  priority, so expect a longer queue) and optionally requeue onto `acc_debug`
+  once the holder leaves.
+- **source**: workspace/looped-flow-matching, job 46121934
+
+### A released checkpoint's wrapper key is not the loader's wrapper key
+
+- **sandbox**: NM5
+- **date**: 2026-09-19
+
+`gdhe17/Self-Forcing`'s `self_forcing_dmd.pt` stores its weights as
+`{"generator_ema": {825 tensors}}`, while `ode_init.pt` uses `{"generator": ...}`.
+`model/base.py:80-96` only unwraps `generator`/`model` and then calls
+`load_state_dict(..., strict=True)`, so pointing `generator_ckpt` at the released
+file fails immediately. Every *other* loader in the repo (`inference.py:83`,
+`demo.py:125`) unwraps `generator_ema` explicitly. To keep the branch pristine,
+rewrap off-tree instead of patching the loader:
+`torch.save({"generator": torch.load(src, map_location="cpu", weights_only=True,
+mmap=True)["generator_ema"]}, dst)` — then verify bitwise with `torch.equal` over
+every inner tensor, and record both files' sha256 next to the config line.
+- **source**: workspace/looped-flow-matching, 2026-09-19
+
+### Align checkpointed non-loop work with native Self-Forcing, but retain loop replay state
+- **sandbox**: NM5
+- **session**: dryrun
+- **date**: 2026-09-21
+- **trigger**: The branch passed an attention KV-cache object into `torch.utils.checkpoint`, unlike native `Self-Forcing/train.py`; removing all branch KV snapshots then broke the loop's backward cursor semantics.
+- **wrong**: Patch the branch loop, delete every KV snapshot, or assume that a cache passed through checkpoint is equivalent to the native checkpoint call.
+- **correct**: Keep `Self-Forcing-blockwise` at its pinned commit and patch only the sidecar wrapper: clear cross-attention cache arguments while a checkpointed block is executing, while leaving the loop's `KVCacheCheckpointState` snapshots untouched. This aligns the non-loop checkpoint behavior without changing loop logic.
+- **source**: workspace/looped-flow-matching, native `Self-Forcing/train.py`, dryrun job 46239326
+
+### End a capped distributed dryrun through process-group cleanup
+- **sandbox**: NM5
+- **session**: dryrun
+- **date**: 2026-09-21
+- **trigger**: Raising `SystemExit(0)` at the configured step cap returned success but left a teardown-time NCCL warning in the otherwise healthy 30-step run.
+- **wrong**: Treat a successful step cap as an immediate process exit in a multi-process trainer.
+- **correct**: Raise a private step-cap sentinel, destroy the initialized process group in the wrapper's normal cleanup path, and return zero. The native training loop and loop semantics remain unchanged.
+- **source**: workspace/looped-flow-matching, dryrun jobs 46218009 and 46239326

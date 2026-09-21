@@ -1,0 +1,193 @@
+workspace: looped-flow-matching
+project_name: looped-flow-matching
+experiment_version:
+  current: 1
+  archive_dir_pattern: sue-exp-history/exp-version-{id}
+experiment_family: self_forcing_blockwise_lora_dmd_training
+workflow_type: training
+default_wandb_project: looped-self-forcing-blockwise-lora-dmd
+backend:
+  primary: nm5
+  order:
+    - nm5
+wandb_policy:
+  mode: offline
+  required: true
+  syncable_artifacts: true
+  reason: NM5 training jobs keep local offline W&B runs under the training bundle
+environment:
+  env_manager: conda
+  env_root: scale_up_outputs/envs
+  dataset_root: datasets
+  conda_root: scale_up_outputs/envs/miniconda3
+  conda_prefixes:
+    looped_self_forcing: scale_up_outputs/envs/miniconda3/envs/looped-self-forcing
+  ignored_env_sources:
+    - deepresearch-sandbox/config_nm5.txt
+  backend_env_sources:
+    nm5: runtime.yaml:backend_env.nm5
+  allowed_external_roots:
+    - scale_up_outputs/envs
+    - .cache
+  cache_root_base: .cache
+  cache_roots:
+    HF_HOME: .cache/huggingface
+    HF_HUB_CACHE: .cache/huggingface/hub
+    TORCH_HOME: .cache/torch
+    MODELSCOPE_CACHE: backend-configured
+    MPLCONFIGDIR: .cache/matplotlib
+    WANDB_CACHE_DIR: .cache/wandb
+  required_official_evaluator_imports:
+    - torch
+    - peft
+    - wandb
+    - flash_attn
+    - omegaconf
+  last_fullrun_preflight_json: readiness/readiness_nm5.json
+sandbox_script_folders:
+  nm5: slurm_scripts
+sandbox_resources:
+  nm5:
+    scheduler: slurm
+    partition: acc
+    dryrun_qos: acc_debug
+    qos: acc_ehpc
+    gpu_type: H100
+    gpus_per_node: 4
+    cpus_per_gpu: 20
+    max_nodes_per_job: 1
+    dryrun_walltime: "02:00:00"
+    default_walltime: "06:00:00"
+backend_env:
+  nm5:
+    source_note: Resolve private values from ignored deepresearch-sandbox/config_nm5.txt.
+    required_keys:
+      - NM5_LOGIN_SSH
+      - NM5_TRANSFER_SSH
+      - NM5_DEEPRESEARCH_ROOT
+      - NM5_ACCOUNT
+      - WANDB_ENTITY
+variable:
+  unit: experiment/run/config/variant
+  description: One complete four-GPU selected-block LoRA DMD training run.
+  owns_full_generation_workload: false
+  allow_smaller_units: false
+  forbidden_launcher_side_splits:
+    - prompt
+    - image
+    - record
+    - seed
+    - timestep
+  required_stages:
+    - setup
+    - model_load
+    - train_forward_backward_update
+    - checkpoint_write
+    - wandb_ledger
+dryrun:
+  full_run_unit_count: 1
+  dryrun_unit_count: 1
+  full_run_steps: 600
+  dryrun_steps: 30
+  seed_count: 1
+  requested_gpu_count: 4
+  dryrun_gpu_count: 4
+  profile_stages: all
+  scale_reduction: Reduce steps and profiling scope only; keep the real 21-frame train path and four-GPU torchrun shape.
+autotune_hyperparam:
+  skip: false
+  eval_disabled: true
+  eval_disabled_reason: The native DMD training entrypoint has no FID evaluator; probes use real loss/W&B and checkpoint evidence.
+  launcher_mapping:
+    bs_per_gpu: batch_size
+    ckpt_per_step: log_iters
+    fidc_cal_per_step: SUE_SAMPLE_EVERY
+  required_fields:
+    - bs_per_gpu
+    - ckpt_per_step
+    - fidc_cal_per_step
+parallelism_plan:
+  sandbox: nm5
+  gpus_per_node: 4
+  per_unit_gpus: 4
+  max_parallel: 1
+  concurrent_nodes: 1
+  packing: one four-GPU Slurm allocation per training unit
+paths:
+  scale_up_outputs_root: scale_up_outputs
+  exp_dir: nm5_self_forcing_blockwise_lora_dmd
+  final_result_root: final_result
+  config_root: config
+  slurm_scripts_root: slurm_scripts
+  outputs_root: results
+  logs_root: logs
+  run_state_root: run_state
+  progress_root: progress
+  timings_root: timings
+  reports_root: reports
+  readiness_root: readiness
+  generated_outputs_root: results/generated
+  ledger_csv: artifacts/experiment_results.csv
+  slurm_logs_root: logs
+  wandb_root: wandb
+  hf_cache_root: cache/huggingface
+  artifacts_root: artifacts
+  results_root: results
+  datasets_root: datasets
+  dataset_root: datasets
+  envs_root: envs
+  ckpt_root: ckpt
+  downloaded_assets_root: downloaded
+  autotune_hyperparam_root: autotune_hyperparam
+output_policy:
+  scale_up_outputs_inode_light: true
+  loose_output_exception: one_latest_checkpoint_and_one_final_model
+  bulk_artifact_strategy: retain_latest_checkpoint_and_compact_training_logs
+  slurm_job_name_prefix: silly-
+  slurm_job_name_prefix_source: missing_or_invalid_user_yaml_defaults_to_silly
+policy:
+  workflow_types:
+    - training
+    - generation
+  required_runtime_keys:
+    paths:
+      - scale_up_outputs_root
+      - exp_dir
+      - config_root
+      - slurm_scripts_root
+      - logs_root
+      - run_state_root
+      - progress_root
+      - timings_root
+      - reports_root
+      - readiness_root
+      - generated_outputs_root
+      - ledger_csv
+      - slurm_logs_root
+      - wandb_root
+      - hf_cache_root
+      - autotune_hyperparam_root
+    sandbox_script_folders:
+      - nm5
+    sandbox_resources:
+      - nm5
+  runtime_environment_policy:
+    env_manager: backend_configured
+    cache_roots_required: true
+    forbid_local_env_sync: true
+    production_gpu_runtime_uses_backend_env: true
+  training_autotune_policy:
+    required_before_dryrun: true
+    recommendation_fields:
+      - bs_per_gpu
+      - ckpt_per_step
+      - fidc_cal_per_step
+    artifact_path: paths.autotune_hyperparam_root/<sandbox>/recommended_hyperparam.json
+  backend_sections:
+    nm5:
+      scheduler: slurm
+      requires_explicit_account: true
+      requires_user_prefixed_job_name: true
+  output_policy:
+    high_fanout_outputs_are_compact_or_reduced: true
+    retain_only_latest_resumable_checkpoint: true

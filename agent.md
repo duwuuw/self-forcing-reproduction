@@ -1,6 +1,6 @@
 # agent.md — looped-flow-matching / Temporal Loop 代码定位
 
-记录时间：2026-09-13 04:17 UTC（最后更新：2026-09-17 05:47 UTC，加入第四轮 fullrun 结果）
+记录时间：2026-09-13 04:17 UTC（最后更新：2026-09-21，加入对齐后的 formal 训练状态）
 
 ## 当前接管交接（优先于下方历史记录）
 
@@ -9,12 +9,24 @@
 本节是本轮运行的最新状态；下方涉及 40 秒、162 latent frames 或旧实验的内容均为
 历史资料，不能覆盖本节的硬约束。
 
-**最新状态（2026-09-17 05:47 UTC）：R1–R4 四轮共 16 个候选全部跑完并完成收尾，
-没有待提交作业。搜索结论见下方「十六配置合并结论」——最不伤动作的深度区间是
+**最新状态（2026-09-21）：R1–R4 四轮共 16 个候选全部跑完并完成收尾；
+第五轮（block-wise LoRA DMD 训练接入）的对齐 dryrun 已通过，formal 作业已提交并排队。**
+搜索结论见下方「十六配置合并结论」——最不伤动作的深度区间是
 `layer_start=8, layer_end=15`（K=2），且该结论在 per-block（R3）与 stack（R4）
-两种 loop 算子语义下都成立。**
+两种 loop 算子语义下都成立。该区间已被上游分支 `168d4de` 采纳为训练预设的固定配置。
+
+**第五轮要点见下方「第五轮：block-wise LoRA DMD 训练接入」**：对齐后的 dryrun 已通过
+（NM5 作业 `46239326`，30 steps，零 OOM、零 CheckpointError）；formal 作业
+`formal_align_r1_20260921`（NM5 作业 `46240819`）已提交，目前等待 Slurm 调度，
+尚无完成证据。三个非显然的根因（`is_init` 重放缺陷、
+FSDP 切分阈值卡在 5e7、NM5 的 H100 只有 63.29 GiB）都记录在该节，**改动全部在分支外**，
+`Self-Forcing-blockwise` 的 HEAD 仍是 `168d4de`、代码一字未改。
 
 ### 提交到 GitHub（强制要求，优先于其他收尾动作）
+
+**本轮操作员覆盖（2026-09-21）**：本次对齐修复与 dryrun 证据已通过受控 rsync
+同步到 NM5；用户最新指令已明确允许在 formal 完成前先 commit/push 当前版本到
+GitHub。formal 作业仍需独立监控，不能把提交视为训练成功证据。
 
 **推送目标（已配置好，直接 `git push` 即可）**
 
@@ -160,6 +172,14 @@ variant），4 个 eval 作业全部 `COMPLETED`、`ExitCode 0:0`：
 | `k2_l16_23` | 16..23 | 45861590 | COMPLETED 0:0（1:16:48） |
 | `k2_l22_29` | 22..29 | 45861591 | COMPLETED 0:0（1:17:08） |
 
+**2026-09-20 只读复核（本收尾任务的取证）**：`sacct` 重查这四个作业仍为 `COMPLETED`、
+`ExitCode 0:0`（四个 `.batch`/`.extern` 子步骤同），结束时刻 09-14 19:02:03 / 19:03:08 /
+19:03:03 / 19:03:23；NM5 上 `fullrun_r3_20260914/variants/<v>/eval/metrics.json` **4 个齐全**
+（2259–2271 B，mtime 与作业结束时刻一致）；`run_state/` 内 `eval_complete.json` 与 4 个
+`eval_<v>_complete.json` 均在；workspace 级 `artifacts/eval_results_history.md`（188 行 /
+16 条）与 bundle 级 history **都已含 R3 的 4 个 `<!-- eval:fullrun_r3_20260914:<v> -->` 标记**
+⇒ 本轮收尾产物完备。`squeue` 中无本工作区作业（在排队的属于同一共享账号下其他项目）。
+
 VBench-Long 六维绝对值，括号内为相对关循环 baseline `k1_full_19_26`
 （`fullrun_r1_20260913`）的差值：
 
@@ -236,6 +256,13 @@ k2_l22_29 (R3 per-block, 22-29)    +0.1760
 `16..23`，而不是继续加大 K，也不是继续向深层推。**若只看 dynamic 数值会误选 22–29
 （R4 甚至为正），必须同时看 imaging/aesthetic。**
 
+**结论溯源与收尾状态（2026-09-20 复核）**：16 个配置的六维数值全部可溯源到各轮的
+`variants/<v>/eval/metrics.json`。R3 四条已与本地
+`artifacts/fullrun_r3_20260914/variants/*/eval/metrics.json` 对照，小数点后 4 位与上表
+逐条一致；R1–R4 的 16 条也都在 `artifacts/eval_results_history.md`（188 行）里。
+**本轮复核不改变任何结论**：R3 的四条读数、深度单调性、以及"8..15 是唯一两头都不亏的
+区间"均维持原样；搜索阶段依旧封盘，不提交任何作业。
+
 ### 第四轮：layer-wise 代码迁移与 dryrun（2026-09-15）
 
 上游 `vibe-hust/self-forcing-reproduction@looped-self-forcing`（提交 `e1df619`
@@ -306,6 +333,70 @@ agent.md 早前"R3 已写出该文件"的记录与实际不符。** 已用各轮
 并已 scp 回本地 bundle。若后续再出现"收尾脚本报 EXIT=0 但产物找不到"的情况，
 先 `find` 确认路径再信任记录。
 
+### 第五轮：block-wise LoRA DMD 训练接入（2026-09-18 → 09-20）
+
+**目标**：把上游分支 `block-wise-temporal-loop`（tip `168d4de`，selected-block LoRA DMD 训练）
+**第一次真正跑在 GPU 上**。该分支自己的 `AGENTS.md` 把 GPU 明确划在证据边界之外：
+`GPU, Wan2.1-14B, real training ... remain unverified`。本轮就是在撞这条边界。
+
+**代码位置**：`Self-Forcing-blockwise/`（git worktree，HEAD `168d4de`，105 tracked files）。
+NM5 上经 `git bundle` → `fetch` → `worktree add` 部署，**HEAD 与本地一致**。
+大资产（`VBench` / `checkpoints` / `wan_models`）从默认树软链 —— 沿用 §"NM5 asset reuse" 的约定。
+
+**结果：训练冒烟通过。** 作业 `46169313`（`<username>-blockwise-lora-dmd-smoke_r8_20260919-smoke`，
+`--account=<NM5_ACCOUNT> --partition=acc --qos=acc_debug --gres=gpu:4`；作业名前缀与账号均
+按硬规则从私有 `deepresearch-sandbox/config_nm5.txt` 现场解析，不写入本文件）
+**`COMPLETED 41:44`**，`rc=124`（step-unbounded loop 的预期收尾）、**`OOM=0` / `CheckpointError=0`**、
+`TRAIN_EVIDENCE_OK checkpoints=1 offline_wandb_runs=1`。
+写出 7 个 adapter 存档（step 10..70）；`generator_optimizer` state `step`=**14**（=70÷`dfake_gen_update_ratio` 5）、
+`critic_optimizer` `step`=**70** ⇒ **优化器确实在走**。
+
+**三个非显然的根因（按发现顺序，全部为实测）**
+
+1. **`is_init` 重放缺陷（分支真 bug）**：`wan/modules/model.py:174-183` 的
+   `WanT2VCrossAttention.forward` 在 `torch.utils.checkpoint(..., use_reentrant=False)` **体内部**
+   翻转共享标志 `crossattn_cache["is_init"]`。backward 重放时该标志已是 `True`，于是走缓存分支、
+   **整个跳过 K/V 投影**，两次 pass 保存的张量数不同 ⇒
+   `CheckpointError: ... forward 82 vs recomputation 72`。四个 rank 计数完全相同 ⇒ 不是竞态。
+   上游**真正跑过 600 iterations** 的 `self_forcing_dmd.yaml` 同样是 `gradient_checkpointing: true`
+   但没有 `temporal_loop`/`lora` ⇒ 缺陷出在新增代码。
+2. **FSDP 切分阈值刚好卡住（也是最反直觉的一条）**：`utils/distributed.py:80` 的 `fsdp_wrap`
+   默认 `min_num_params=int(5e7)`，而本模型单个 transformer block ≈ **4.7e7** —— 差一点点，
+   于是整个 1.42B student 落成**一个** FSDP 单元，每次 forward 一次性 all-gather **2.64 GiB**，
+   这就是 OOM 的那个申请。降到 `4e7` 后按 block 切分（~94 MB）。
+   **顺带解释了"LoRA 为什么没省显存"**：整个 student 在同一个 flat param 里，
+   `use_orig_params=True` 下 `flat_param.requires_grad=True`，冻结 block 的激活照样进图。
+3. **显存账**：NM5 的 H100 只有 **63.29 GiB 可用**（`nvidia-smi` 报 `65247 MiB`），
+   **不是 80 GB** —— 上游参考是按 80 GB 调的。4 卡下 14B teacher 的 fp32 分片是 **~14 GiB/卡**
+   （64 卡时仅 ~0.9 GiB）。最终靠 **teacher + T5 + critic 三者 CPU offload**（合计约 25 GB）装下。
+
+**迭代轨迹**：step 20（r5）→ 30（r6，加 `expandable_segments`）→ 70（r7，加 FSDP 阈值）
+→ 跑满 40 分钟（r8，加 critic offload）。中途一次 `ValueError: training_gradient_window_frames
+cannot exceed num_training_frames`（`pipeline/self_forcing_training.py:93`）—— 分支自有校验器
+禁止该方向，**改帧数必须同步改 window**。
+
+**硬约束（本轮全程遵守）**：`temporal_loop` 与其 layer 范围 **8..15 不得改动**。
+最终存档 metadata 自证未变：`{layer_start: 8, layer_end: 15, k_min: 2, k_max: 2, strength: 1.0}`。
+
+**与上游 preset 的偏离（全部记录在配置注释里）**
+
+| 项 | 上游 | 本次 | 原因 |
+| --- | --- | --- | --- |
+| `generator_ckpt` | `checkpoints/ode_init.pt` | `self_forcing_dmd_ema_as_generator.pt` | 用户批准：从**已 DMD** 的 Self-Forcing 权重起步。发布文件顶层是 `{"generator_ema": …}` 而加载器只认 `{"generator": …}`（`model/base.py:89-96` + `strict=True`），故做了**位级重包装**（825 tensor `torch.equal` 全真） |
+| `num_training_frames` / `min_training_frames` | 21 | **21（当前）** | 早先为显存做过 15 帧诊断，但当前 dryrun 恢复官方 21 帧；`training_gradient_window_frames` 保持与帧数相等，满足分支 `window ≤ frames` 校验 |
+| `log_iters`（冒烟） | 50 | 10 | 只用 submitter 白名单派生，fail-closed 断言"除白名单 key 外无差异" |
+
+**全部修复在分支外**：`scripts/train_blockwise_lora_dmd.py`（含 offline W&B 强制、
+`is_init` 重放修复、teacher/critic CPU offload、FSDP 切分阈值），每个补丁都**断言自己生效**
+并打审计行（`WRAPPER: fsdp_wrap <模块> params=X.XXB cpu_offload=… min_num_params=…`）。
+分支 `git status` 只有那个 preset YAML 是 M。详见 `HANDOFF_NEXT.md` §10。
+
+**断言边界（不要过度声称）**：本轮**证明了**管线通、优化器在走、存档与 W&B 落盘；
+**没有证明模型学到东西** —— `lora_B` 70 步后仅 2/16 非零、总 |sum|≈0.10，
+这是 `lr=2e-6` × 14 次更新的必然结果，**不是 bug，但说明 70 步远不够**（上游参考 600 步）。
+**正式 600-step run 已提交但尚无完成证据**：实测 **~29 s/step** ⇒ 600 步约 **4.8 小时**，其中 critic offload 约贡献 2.5× 的减速。
+**协议**：当前训练是 **21 latent 帧**，**不可**与 123-latent 的 VBench-Long 评测分数直接比较；此前 15 帧只代表历史诊断跑。
+
 ### Pipeline 状态与下一步
 
 - `sue-nm5-env-install` 与 `sue-dryrun` 均已按证据记录为 completed。
@@ -338,7 +429,8 @@ agent.md 早前"R3 已写出该文件"的记录与实际不符。** 已用各轮
   `fullrun_r4_20260915/run_state/eval_complete.json`；随后 `reduce_vbench_history.py`
   写入 history。**并已用各轮留存的 `metrics.json` 回填 R1–R3，使 history 恢复为
   R1–R4 全部 16 条**（188 行），文件已 scp 回本地 bundle。
-- `artifacts/experiment_results.csv` 需按 R4 结果补 4 行（见「实验结果 CSV Ledger」）。
+- `artifacts/experiment_results.csv` 已含 R1–R4 全部 16 行（另加 4 行 dryrun）；2026-09-18
+  重跑 finalize 后核验，与各轮 `metrics.json` 逐位一致（见「实验结果 CSV Ledger」）。
   **R1–R4 共 16 个候选已全部测完，不要再提交任何作业。**
 - fullrun 完成判据：`<run>/run_state/generation_complete.json` 与 `eval_complete.json`、
   `variants/<v>/eval/metrics.json`、`artifacts/experiment_results.csv` 新增 4 行、
