@@ -10,9 +10,7 @@ SF="${SUE_SF_DIR:-$WS/Self-Forcing}"
 # An alternative checkout (SUE_SF_DIR) is a git clone, so it carries only
 # tracked source. The large non-git assets stay in the default tree and must be
 # reachable from the alternative one via symlinks. Fail loudly here with the
-# exact remediation rather than dying later inside an eval preflight (this cost
-# one full dryrun on 2026-09-15: the eval stage died on a missing
-# $SF/VBench/vbench/third_party/amt/cfgs/AMT-S.yaml).
+# exact remediation rather than dying later inside an evaluation preflight.
 if [[ "$SF" != "$WS/Self-Forcing" ]]; then
   for _sf_asset in VBench checkpoints wan_models; do
     if [[ ! -e "$SF/$_sf_asset" && -e "$WS/Self-Forcing/$_sf_asset" ]]; then

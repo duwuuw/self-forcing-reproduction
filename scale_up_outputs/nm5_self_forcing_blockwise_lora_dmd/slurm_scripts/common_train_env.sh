@@ -40,12 +40,8 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false
 # NM5's H100 exposes 63.29 GiB usable and the backward reduce-scatter needs a
-# transient shard-sized buffer. Runs without this flag died with 1.0-2.4 GiB
-# "reserved by PyTorch but unallocated" -- i.e. fragmentation, not real demand
-# (job 46164079 failed to allocate 1.32 GiB with 1.13 GiB free). Expandable
-# segments reclaims that. NOTE: an earlier NCCL "unhandled cuda error" was
-# misattributed to this flag; its tail said "Cuda failure 2 'out of memory'",
-# so it was an OOM surfacing through NCCL, not an incompatibility.
+# transient shard-sized buffer. Expandable segments reclaim allocator
+# fragmentation without changing the model or loop semantics.
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 # ---------------------------------------------------------------- training cfg
@@ -109,9 +105,8 @@ gpu_sample() {
 }
 
 # --------------------------------------------------------------- preflight
-# Fail loudly before the job burns GPU time. The block-wise training path has
-# never been executed on GPU (upstream evidence boundary is CPU/static tests),
-# so every asset and import the run needs is asserted here.
+# Fail loudly before the job burns GPU time; every required asset and import
+# is asserted here.
 sue_train_preflight() {
   local rc=0
   # The branch resolves configs/default_config.yaml and wan_models/... relative

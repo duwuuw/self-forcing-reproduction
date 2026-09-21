@@ -96,9 +96,8 @@ def _install_teacher_cpu_offload() -> None:
       shard moves host<->device around each forward/backward, and its optimizer
       state lives on the host.
 
-    Both are needed on NM5: with only the teacher offloaded, job 46167293 still
-    OOMed inside the teacher forward (``model/dmd.py:95`` -> ``real_score``),
-    asking for 916 MiB with 590 MiB free.
+    Both are needed on reduced-memory nodes: keeping only the teacher offloaded
+    can still leave the teacher forward without enough free device memory.
 
     Applied from outside the branch; the clean fix is a ``real_score_cpu_offload``
     / ``fake_score_cpu_offload`` config key in the branch.
@@ -136,8 +135,7 @@ def _install_teacher_cpu_offload() -> None:
         # "size" and no min_num_params, so it takes the default 5e7. This model's
         # transformer blocks are ~4.7e7 params, i.e. *just* under that, so the
         # whole 1.42B student lands in ONE FSDP unit and its per-forward
-        # all-gather asks for 2.64 GiB in a single allocation -- that allocation
-        # is what OOMs (job 46165923, self_forcing_training.py:290). Lowering the
+        # all-gather asks for a multi-gigabyte single allocation. Lowering the
         # threshold to 4e7 wraps each block separately, so the gather is ~94 MB.
         # It should also let all-frozen (non-LoRA) blocks become units whose
         # parameters do not require grad, collapsing their autograd graph instead
@@ -181,9 +179,8 @@ class _TrainingStepCapReached(Exception):
 def _install_memory_probe() -> None:
     """Log GPU memory at named points so the accounting stops being guesswork.
 
-    Motivation: four training runs OOMed and every explanation offered so far was
-    inferred from reading code rather than measured -- and two of those inferences
-    were later refuted. This instruments the real thing.
+    The probe instruments the real execution path instead of relying on static
+    estimates.
 
     Two levels:
       * every step, a one-line total (allocated / reserved / peak) to stdout and a
