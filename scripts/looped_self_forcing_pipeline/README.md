@@ -112,6 +112,11 @@ against runtime gpu_type=H100 before entering the pipeline; the controller does
 not claim hardware proof from partition metadata. Slurm --time adds runtime
 timeout_kill_after_seconds and finalization_grace_seconds after Hydra's timeout,
 leaving time to record ledger and W&B status without changing model duration.
+When the selected workspace has Git metadata, launchers record its commit and
+dirty state automatically. An archive deployment without `.git` must set
+`SUE_GIT_COMMIT` to the source commit SHA and `SUE_GIT_DIRTY` to `clean`,
+`dirty`, or `unknown`; both values are forwarded to the worker and recorded in
+the W&B run config.
 The Slurm job name uses the username from workspace user.yaml;
 invalid or missing values use the silly- prefix. Its remaining name matches the
 W&B experiment name after resolving method, run ID, and stage. Only selected

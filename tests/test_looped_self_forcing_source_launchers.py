@@ -320,6 +320,8 @@ def _runner_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, dict[str, s
         "SUE_SCRIPTS_DIR": str(BUNDLE_SCRIPTS),
         "WANDB_API_KEY": "fixture-only-key",
         "WANDB_ENTITY": "fixture-only-entity",
+        "SUE_GIT_COMMIT": "abc123def456",
+        "SUE_GIT_DIRTY": "clean",
         "SBATCH_CAPTURE": str(sbatch_calls),
         "ORDER_TRACE": str(tmp_path / "order_trace.txt"),
         "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
@@ -348,6 +350,8 @@ def _runner_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, dict[str, s
 def test_nm5_launcher_forwards_allowed_overrides_and_asset_env_to_slurm(tmp_path: Path):
     _, _, exp_dir, _, environment = _runner_fixture(tmp_path)
     script = BUNDLE_SCRIPTS / "nm5_submit.sh"
+    environment["SUE_GIT_COMMIT"] = "abc123def456"
+    environment["SUE_GIT_DIRTY"] = "clean"
     overrides = [
         "method=layerwise_l08_15_k2",
         "tracking=offline",
@@ -376,6 +380,8 @@ def test_nm5_launcher_forwards_allowed_overrides_and_asset_env_to_slurm(tmp_path
     export_values = next(arg.partition("=")[2] for arg in sbatch_args if arg.startswith("--export="))
     for name in (
         "SUE_ASSET_ROOT",
+        "SUE_GIT_COMMIT",
+        "SUE_GIT_DIRTY",
         "SUE_SCRIPTS_DIR",
         "SUE_PYTHONPATH",
         "WANDB_API_KEY",
@@ -404,6 +410,80 @@ def test_nm5_launcher_forwards_allowed_overrides_and_asset_env_to_slurm(tmp_path
     assert "--job-name=tester-layerwise_l08_15_k2-run-one-train" in sbatch_args
     assert str(BUNDLE_SCRIPTS / "nm5_worker.sbatch") in sbatch_args
     assert CUSTOM_LOGS_ROOT not in result.stdout + result.stderr
+
+
+def test_nm5_launcher_does_not_use_parent_repository_for_archive_provenance(
+    tmp_path: Path,
+):
+    root, workspace, _, _, environment = _runner_fixture(tmp_path)
+    subprocess.run(["git", "-C", str(root), "init", "--quiet"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "--message=parent-repository-fixture",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    environment.pop("SUE_GIT_COMMIT", None)
+    environment.pop("SUE_GIT_DIRTY", None)
+
+    result = subprocess.run(
+        ["bash", str(BUNDLE_SCRIPTS / "nm5_submit.sh"), "train", "run-parent-git", "scale=smoke"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.returncode == 2
+    assert "SUE_GIT_COMMIT is required when the workspace is not a Git checkout" in result.stderr
+    assert not (tmp_path / "sbatch_count.txt").exists()
+
+
+def test_nm5_launcher_rejects_provenance_override_that_disagrees_with_checkout(
+    tmp_path: Path,
+):
+    _, workspace, _, _, environment = _runner_fixture(tmp_path)
+    subprocess.run(["git", "-C", str(workspace), "init", "--quiet"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(workspace),
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "--message=workspace-repository-fixture",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    result = subprocess.run(
+        ["bash", str(BUNDLE_SCRIPTS / "nm5_submit.sh"), "train", "run-git-mismatch", "scale=smoke"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.returncode == 2
+    assert "SUE_GIT_COMMIT disagrees with the selected workspace checkout" in result.stderr
+    assert not (tmp_path / "sbatch_count.txt").exists()
 
 
 def test_nm5_launcher_resolves_python_and_assets_from_runtime_when_private_overrides_are_unset(

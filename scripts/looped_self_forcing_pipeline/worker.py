@@ -961,6 +961,8 @@ def _start_inference_tracking(
         except ImportError as error:
             raise RuntimeError("required W&B tracking package is unavailable") from error
 
+    from looped_self_forcing_pipeline.training_policy import git_provenance
+
     provenance = prepared["checkpoint"]["provenance"]
     wandb_run = wandb_module.init(
         project=_tracking_project(config),
@@ -981,6 +983,7 @@ def _start_inference_tracking(
             "checkpoint_sha256": provenance.get("checkpoint_sha256"),
             "base_checkpoint_sha256": prepared["checkpoint"]["base_checkpoint_sha256"],
             "source_training_step": provenance.get("source_training_step"),
+            **git_provenance(),
         },
     )
     run_id = str(getattr(wandb_run, "id", "") or "").strip()

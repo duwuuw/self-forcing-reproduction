@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -149,6 +150,16 @@ def _sanitize_wandb_config(value: Any) -> Any:
     return value
 
 
+def git_provenance() -> dict[str, str]:
+    commit = os.environ.get("SUE_GIT_COMMIT", "").strip().casefold()
+    dirty = os.environ.get("SUE_GIT_DIRTY", "unknown").strip().casefold()
+    if not re.fullmatch(r"[0-9a-f]{7,40}", commit):
+        commit = "unknown"
+    if dirty not in {"clean", "dirty", "unknown"}:
+        dirty = "unknown"
+    return {"git_commit": commit, "git_dirty": dirty}
+
+
 def install_training_policy(
     trainer_class: type,
     wandb_module: Any,
@@ -198,6 +209,7 @@ def install_training_policy(
                 "experiment_name": os.environ.get("WANDB_EXPERIMENT_NAME", ""),
                 "tracking_mode": os.environ.get("SUE_WANDB_MODE", "offline"),
                 "project": os.environ.get("WANDB_PROJECT", ""),
+                **git_provenance(),
             }
             kwargs["config"] = run_config
         run = original_wandb_init(*args, **kwargs)

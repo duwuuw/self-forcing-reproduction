@@ -18,6 +18,57 @@ _is_bundle_relative_path() {
   return 0
 }
 
+configure_code_provenance() {
+  local workspace=$1 workspace_real git_root actual_commit git_status actual_dirty
+  workspace_real="$(realpath -e -- "$workspace" 2>/dev/null)" || {
+    printf 'source workspace is unavailable for Git provenance\n' >&2
+    return 2
+  }
+  git_root="$(git -C "$workspace_real" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -n "$git_root" ]]; then
+    git_root="$(realpath -e -- "$git_root" 2>/dev/null || true)"
+  fi
+  if [[ -n "$git_root" && "$git_root" == "$workspace_real" ]]; then
+    actual_commit="$(git -C "$workspace_real" rev-parse --verify HEAD 2>/dev/null || true)"
+    [[ "$actual_commit" =~ ^[A-Fa-f0-9]{7,40}$ ]] || {
+      printf 'source workspace Git commit could not be resolved\n' >&2
+      return 2
+    }
+    actual_commit="${actual_commit,,}"
+    if [[ -n "${SUE_GIT_COMMIT:-}" && "${SUE_GIT_COMMIT,,}" != "$actual_commit" ]]; then
+      printf 'SUE_GIT_COMMIT disagrees with the selected workspace checkout\n' >&2
+      return 2
+    fi
+    SUE_GIT_COMMIT="$actual_commit"
+    git_status="$(git -C "$workspace_real" status --porcelain --untracked-files=normal 2>/dev/null)" || {
+      printf 'Git dirty state could not be resolved for the selected source tree\n' >&2
+      return 2
+    }
+    if [[ -n "$git_status" ]]; then
+      actual_dirty=dirty
+    else
+      actual_dirty=clean
+    fi
+    if [[ -n "${SUE_GIT_DIRTY:-}" && "$SUE_GIT_DIRTY" != "$actual_dirty" ]]; then
+      printf 'SUE_GIT_DIRTY disagrees with the selected workspace checkout\n' >&2
+      return 2
+    fi
+    SUE_GIT_DIRTY="$actual_dirty"
+  else
+    [[ "${SUE_GIT_COMMIT:-}" =~ ^[A-Fa-f0-9]{7,40}$ ]] || {
+      printf 'SUE_GIT_COMMIT is required when the workspace is not a Git checkout\n' >&2
+      return 2
+    }
+    SUE_GIT_COMMIT="${SUE_GIT_COMMIT,,}"
+    SUE_GIT_DIRTY="${SUE_GIT_DIRTY:-unknown}"
+  fi
+  [[ "$SUE_GIT_DIRTY" == clean || "$SUE_GIT_DIRTY" == dirty || "$SUE_GIT_DIRTY" == unknown ]] || {
+    printf 'SUE_GIT_DIRTY must be clean, dirty, or unknown\n' >&2
+    return 2
+  }
+  export SUE_GIT_COMMIT SUE_GIT_DIRTY
+}
+
 resolve_logs_root() {
   local scripts_root=$1
   local exp_dir=$2

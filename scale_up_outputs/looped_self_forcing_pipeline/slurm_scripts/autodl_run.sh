@@ -52,6 +52,7 @@ pipeline="$workspace/scripts/looped_self_forcing_pipeline/pipeline.py"
   printf 'looped-flow-matching workspace or pipeline is missing under the configured AutoDL root\n' >&2
   exit 2
 }
+configure_code_provenance "$workspace"
 
 if [[ -z "${SUE_EXP_DIR:-}" ]]; then
   SUE_EXP_DIR="$workspace/scale_up_outputs/looped_self_forcing_pipeline"
@@ -85,7 +86,7 @@ run_tmux_clean() (
     export -n "$name"
   done < <(compgen -e)
 
-  export PATH SUE_ASSET_ROOT SUE_EXP_DIR SUE_EXECUTION_ID
+  export PATH SUE_ASSET_ROOT SUE_EXP_DIR SUE_EXECUTION_ID SUE_GIT_COMMIT SUE_GIT_DIRTY
   for name in HOME LD_LIBRARY_PATH CUDA_HOME ROCM_PATH CUDA_VISIBLE_DEVICES WANDB_API_KEY WANDB_ENTITY; do
     if [[ -v $name ]]; then
       export "$name"

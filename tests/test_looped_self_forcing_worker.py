@@ -578,9 +578,11 @@ def test_training_worker_environment_preserves_online_mode_for_source_wrapper(
 
 
 def test_inference_tracking_starts_required_run_and_records_actual_run_id(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch
 ):
     worker = _module("worker")
+    monkeypatch.setenv("SUE_GIT_COMMIT", "abc123def456")
+    monkeypatch.setenv("SUE_GIT_DIRTY", "clean")
     config = SimpleNamespace(
         tracking={"mode": "offline", "required": True, "project": "shared-project"},
         backend=SimpleNamespace(name="nm5"),
@@ -633,6 +635,8 @@ def test_inference_tracking_starts_required_run_and_records_actual_run_id(
     assert arguments["group"] == "infer-1"
     assert arguments["job_type"] == "inference"
     assert arguments["config"]["checkpoint_sha256"] == "c" * 64
+    assert arguments["config"]["git_commit"] == "abc123def456"
+    assert arguments["config"]["git_dirty"] == "clean"
     assert (run_root / "wandb_run_id.txt").read_text(encoding="utf-8") == (
         "actual-inference-run\n"
     )

@@ -221,6 +221,8 @@ def test_wandb_config_redacts_backend_paths_but_keeps_execution_values(
             "experiment_name": "layer-profile-run-1-train",
             "tracking_mode": "offline",
             "project": "comparison-project",
+            "git_commit": "unknown",
+            "git_dirty": "unknown",
         },
     }
     assert private_root not in repr(observed["config"])
@@ -236,6 +238,8 @@ def test_wandb_config_includes_manifest_training_scale_and_runtime_identity(
     monkeypatch.setenv("SUE_BACKEND", "nm5")
     monkeypatch.setenv("SUE_RUN_ID", "pair-k3-lr5gen")
     monkeypatch.setenv("SUE_WANDB_MODE", "offline")
+    monkeypatch.setenv("SUE_GIT_COMMIT", "abc123def456")
+    monkeypatch.setenv("SUE_GIT_DIRTY", "clean")
     monkeypatch.setenv(
         "WANDB_EXPERIMENT_NAME", "layerwise_l23_30_k3_lr5gen-pair-k3-lr5gen-train"
     )
@@ -288,4 +292,6 @@ def test_wandb_config_includes_manifest_training_scale_and_runtime_identity(
         "experiment_name": "layerwise_l23_30_k3_lr5gen-pair-k3-lr5gen-train",
         "tracking_mode": "offline",
         "project": "looped-self-forcing-lora-dmd",
+        "git_commit": "abc123def456",
+        "git_dirty": "clean",
     }
