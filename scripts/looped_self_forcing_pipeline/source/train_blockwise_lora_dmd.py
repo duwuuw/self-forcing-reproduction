@@ -258,6 +258,7 @@ def _install_memory_probe() -> None:
     import trainer.distillation as distillation
 
     gib = float(2 ** 30)
+    rank = _os.environ.get("RANK", "unknown")
 
     def _snap(tag: str, force: bool = False, to_wandb: bool = False, step=None) -> None:
         if not force and not _PROBE["active"]:
@@ -270,7 +271,7 @@ def _install_memory_probe() -> None:
             # so log it explicitly rather than making the reader subtract.
             frag = reserved - allocated
             print(
-                f"MEMPROBE step={_PROBE['step']} {tag}: allocated={allocated:.2f}GiB "
+                f"MEMPROBE step={_PROBE['step']} rank={rank} {tag}: allocated={allocated:.2f}GiB "
                 f"reserved={reserved:.2f}GiB frag={frag:.2f}GiB peak={peak:.2f}GiB",
                 flush=True,
             )
@@ -291,7 +292,7 @@ def _install_memory_probe() -> None:
                         step=step,
                     )
         except Exception as exc:  # noqa: BLE001 - probing must never abort training
-            print(f"MEMPROBE WARNING: {tag}: {type(exc).__name__}: {exc}", flush=True)
+            print(f"MEMPROBE WARNING rank={rank}: {tag}: {type(exc).__name__}: {exc}", flush=True)
 
     probe_step = int(_os.environ.get("SUE_MEM_PROBE_STEP", "3"))
 
@@ -334,7 +335,7 @@ def _install_memory_probe() -> None:
         if deep:
             torch.cuda.reset_peak_memory_stats()
             _PROBE["active"] = True
-            print(f"===== MEMPROBE deep trace at step {self.step} "
+            print(f"===== MEMPROBE rank={rank} deep trace at step {self.step} "
                   f"(train_generator={train_generator}) =====", flush=True)
             _snap("step_enter", to_wandb=True, step=self.step)
         out = original_step(self, batch, train_generator, **kwargs)

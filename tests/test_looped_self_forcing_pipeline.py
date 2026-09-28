@@ -4,6 +4,7 @@ import csv
 import importlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -44,6 +45,8 @@ def test_hydra_composes_method_backend_stage_tracking_and_scale_groups():
     assert config.scale.name == "smoke"
     assert config.train.max_steps == 10
     assert config.train.log_iters == 10
+    assert config.train.timeout_seconds == 19800
+    assert config.infer.timeout_seconds == 19800
     assert config.seed == 1
     assert config.train.seed == 1
 
@@ -51,6 +54,8 @@ def test_hydra_composes_method_backend_stage_tracking_and_scale_groups():
     assert default.backend.train_gpus == 4
     assert default.train.max_steps == 600
     assert default.train.log_iters == 50
+    assert default.train.timeout_seconds == 19800
+    assert default.infer.timeout_seconds == 19800
     assert default.seed == 1
 
 
@@ -59,6 +64,40 @@ def test_online_tracking_group_uses_same_comparison_project():
     config = config_module.compose_config(["tracking=online"])
 
     assert config.tracking.project == "looped-self-forcing-lora-dmd"
+
+
+def test_paired_layerwise_methods_use_same_layers_lora_and_loss_with_requested_k_lr():
+    config_module = _module("config")
+    baseline = config_module.compose_config(
+        ["method=layerwise_l23_30_k3_lr5gen", "backend=nm5", "stage=train"]
+    ).method
+    low_lr = config_module.compose_config(
+        ["method=layerwise_l23_30_k2_lr5both", "backend=nm5", "stage=train"]
+    ).method
+
+    assert baseline.temporal_loop.layer_start == low_lr.temporal_loop.layer_start == 22
+    assert baseline.temporal_loop.layer_end == low_lr.temporal_loop.layer_end == 29
+    assert baseline.temporal_loop.k_min == baseline.temporal_loop.k_max == 3
+    assert low_lr.temporal_loop.k_min == low_lr.temporal_loop.k_max == 2
+    assert baseline.lr == 4e-7
+    assert baseline.lr_critic == 4e-7
+    assert low_lr.lr == 4e-7
+    assert low_lr.lr_critic == 8e-8
+
+    from omegaconf import OmegaConf
+
+    baseline_values = OmegaConf.to_container(baseline, resolve=True)
+    low_lr_values = OmegaConf.to_container(low_lr, resolve=True)
+    for values in (baseline_values, low_lr_values):
+        values.pop("profile_id")
+        values.pop("lr")
+        values.pop("lr_critic")
+        loop = values["temporal_loop"]
+        loop["layer_start"] = 22
+        loop["layer_end"] = 29
+        loop["k_min"] = 1
+        loop["k_max"] = 1
+    assert baseline_values == low_lr_values
 
 
 def test_resolve_experiment_name_uses_selected_method_profile(capsys):
@@ -112,11 +151,65 @@ def test_neutral_runtime_keeps_reusable_policy_under_policy_namespace():
         REPO_ROOT / "scale_up_outputs/looped_self_forcing_pipeline"
     )
 
-    assert "sandbox_resources" not in runtime
+    assert "sandbox_resources" not in runtime["policy"]
     assert "wandb_policy" not in runtime
-    assert runtime["policy"]["sandbox_resources"]["nm5"]["train_gpus"] == 4
-    assert runtime["policy"]["sandbox_resources"]["autodl"]["infer_gpus"] == 1
+    assert runtime["sandbox_resources"]["nm5"]["partition"] == "acc"
+    assert runtime["sandbox_resources"]["nm5"]["gpu_type"] == "H100"
+    assert runtime["sandbox_resources"]["nm5"]["gpu_usable_memory_gib"] == 63.29
+    assert runtime["sandbox_resources"]["nm5"]["gpu_non_torch_reserve_gib"] == 7.0
+    assert runtime["sandbox_resources"]["nm5"]["gpus_per_node"] == 4
+    assert runtime["sandbox_resources"]["nm5"]["max_nodes_per_job"] == 1
+    assert runtime["sandbox_resources"]["nm5"]["cpus_per_gpu"] == 20
+    assert runtime["sandbox_resources"]["nm5"]["timeout_kill_after_seconds"] == 300
+    assert runtime["sandbox_resources"]["nm5"]["finalization_grace_seconds"] == 600
+    assert runtime["sandbox_resources"]["nm5"]["train_gpus"] == 4
+    assert runtime["sandbox_resources"]["autodl"]["infer_gpus"] == 1
+    assert runtime["sandbox_script_folders"]["nm5"] == "slurm_scripts"
+    assert runtime["backend_env"]["nm5"]["source_note"] == "deepresearch-sandbox/config_nm5.txt"
+    assert "NM5_WORKSPACE_ROOT" in runtime["backend_env"]["nm5"]["required_keys"]
+    assert "SUE_ASSET_ROOT" not in runtime["backend_env"]["nm5"]["required_keys"]
+    assert "NM5_HF_HUB_CACHE" in runtime["backend_env"]["nm5"]["required_keys"]
     assert runtime["policy"]["wandb_policy"]["required"] is True
+
+
+def test_neutral_runtime_names_nm5_python_asset_and_overlay_paths_without_absolute_roots():
+    config_module = _module("config")
+    runtime = config_module.load_runtime_config(
+        REPO_ROOT / "scale_up_outputs/looped_self_forcing_pipeline"
+    )
+
+    environment = runtime["environment"]
+    assert environment["env_manager"] == "conda"
+    assert environment["env_root"] == "scale_up_outputs/envs"
+    assert environment["python_binary"].endswith("/bin/python")
+    assert environment["asset_root"] == "Self-Forcing-blockwise-layerwise"
+    assert environment["python_overlay"] == "envs/hydra_overlay"
+    assert environment["allowed_external_roots"] == [
+        "scale_up_outputs/envs",
+        "Self-Forcing-blockwise-layerwise",
+    ]
+    assert environment["cache_env_sources"] == {
+        "HF_HOME": "NM5_HF_HOME",
+        "HF_HUB_CACHE": "NM5_HF_HUB_CACHE",
+        "MODELSCOPE_CACHE": "NM5_MODELSCOPE_CACHE",
+        "TORCH_HOME": "NM5_TORCH_HOME",
+        "MPLCONFIGDIR": "NM5_MPLCONFIGDIR",
+        "WANDB_CACHE_DIR": "NM5_WANDB_CACHE_DIR",
+    }
+    assert runtime["paths"]["autotune_hyperparam_root"] == "autotune_hyperparam"
+    assert all(not Path(value).is_absolute() for value in environment["allowed_external_roots"])
+
+
+def test_runtime_records_fixed_parameter_autotune_waiver():
+    config_module = _module("config")
+    runtime = config_module.load_runtime_config(
+        REPO_ROOT / "scale_up_outputs/looped_self_forcing_pipeline"
+    )
+
+    assert runtime["autotune_hyperparam"]["skip"] is True
+    assert "fixed" in runtime["autotune_hyperparam"]["waiver_reason"].lower()
+    runtime_text = (REPO_ROOT / "scale_up_outputs/looped_self_forcing_pipeline/config/runtime.yaml").read_text(encoding="utf-8")
+    assert runtime_text.count("autotune_hyperparam:") == 1
 
 
 def test_hydra_backend_gpu_count_must_match_runtime_policy():
@@ -135,7 +228,7 @@ def test_hydra_backend_gpu_count_must_match_runtime_policy():
     assert worker._configured_gpu_count(config, "train", exp_dir) == 4
 
     config.backend.train_gpus = 8
-    with pytest.raises(ValueError, match="disagrees with runtime policy"):
+    with pytest.raises(ValueError, match="disagrees with runtime"):
         worker._configured_gpu_count(config, "train", exp_dir)
 
 
@@ -147,14 +240,22 @@ def test_runtime_paths_resolve_under_the_selected_bundle(tmp_path: Path):
     config.write_text(
         "paths:\n"
         "  config_root: config\n"
+        "  autotune_hyperparam_root: autotune_hyperparam\n"
         "  datasets_root: datasets\n"
         "  slurm_scripts_root: slurm_scripts\n"
         "  artifacts_root: artifacts\n"
         "  ckpt_root: ckpt\n"
         "  final_result_root: final_result\n"
         "  logs_root: logs\n"
+        "  state_root: state\n"
+        "  readiness_root: readiness\n"
+        "  ledger_csv: artifacts/experiment_results.csv\n"
+        "backend: {primary: nm5}\n"
+        "sandbox_script_folders: {nm5: slurm_scripts}\n"
+        "sandbox_resources: {nm5: {partition: acc, qos: acc_ehpc, gpus_per_node: 4, gpu_type: H100, gpu_usable_memory_gib: 63.29, gpu_non_torch_reserve_gib: 7.0, max_nodes_per_job: 1, cpus_per_gpu: 20, timeout_kill_after_seconds: 300, finalization_grace_seconds: 600, train_gpus: 4, infer_gpus: 1}}\n"
+        "backend_env: {nm5: {source_note: deepresearch-sandbox/config_nm5.txt, required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, WANDB_API_KEY, WANDB_ENTITY]}}\n"
+        "environment: {env_manager: conda, env_root: scale_up_outputs/envs, python_binary: scale_up_outputs/envs/miniconda3/envs/looped-self-forcing/bin/python, asset_root: Self-Forcing-blockwise-layerwise, python_overlay: envs/hydra_overlay, allowed_external_roots: [scale_up_outputs/envs, Self-Forcing-blockwise-layerwise], cache_env_sources: {HF_HOME: NM5_HF_HOME, HF_HUB_CACHE: NM5_HF_HUB_CACHE, MODELSCOPE_CACHE: NM5_MODELSCOPE_CACHE, TORCH_HOME: NM5_TORCH_HOME, MPLCONFIGDIR: NM5_MPLCONFIGDIR, WANDB_CACHE_DIR: NM5_WANDB_CACHE_DIR}}\n"
         "policy:\n"
-        "  sandbox_resources: {}\n"
         "  wandb_policy:\n"
         "    required: true\n",
         encoding="utf-8",
@@ -163,13 +264,251 @@ def test_runtime_paths_resolve_under_the_selected_bundle(tmp_path: Path):
     roots = config_module.resolve_runtime_paths(exp_dir)
 
     assert roots == {
+        "autotune_hyperparam_root": exp_dir / "autotune_hyperparam",
         "datasets_root": exp_dir / "datasets",
         "slurm_scripts_root": exp_dir / "slurm_scripts",
         "artifacts_root": exp_dir / "artifacts",
         "ckpt_root": exp_dir / "ckpt",
         "final_result_root": exp_dir / "final_result",
         "logs_root": exp_dir / "logs",
+        "state_root": exp_dir / "state",
+        "readiness_root": exp_dir / "readiness",
+        "ledger_csv": exp_dir / "artifacts/experiment_results.csv",
     }
+
+
+def test_runtime_rejects_external_environment_paths_outside_the_declared_allowlist(tmp_path: Path):
+    config_module = _module("config")
+    exp_dir = tmp_path / "selected-bundle"
+    config_dir = exp_dir / "config"
+    config_dir.mkdir(parents=True)
+    runtime_text = (
+        REPO_ROOT / "scale_up_outputs/looped_self_forcing_pipeline/config/runtime.yaml"
+    ).read_text(encoding="utf-8")
+    runtime_text = runtime_text.replace(
+        "python_binary: scale_up_outputs/envs/miniconda3/envs/looped-self-forcing/bin/python",
+        "python_binary: ../outside/bin/python",
+    )
+    (config_dir / "runtime.yaml").write_text(runtime_text, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="environment.python_binary|allowed_external_roots"):
+        config_module.resolve_runtime_paths(exp_dir)
+
+
+def test_preflight_requires_fresh_standard_max_parallel_artifact(tmp_path: Path):
+    preflight = _module("preflight")
+    exp_dir = tmp_path / "bundle"
+    artifact = exp_dir / "pair-1/max_parallel.json"
+    artifact.parent.mkdir(parents=True)
+    now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    record = {
+        "timestamp": now.isoformat(),
+        "sandbox": "nm5",
+        "partition": "acc",
+        "max_parallel": 4,
+        "limiting_factor": "one four-GPU job per node",
+        "evidence": {"squeue_summary": "redacted", "qos_summary": "redacted"},
+    }
+    artifact.write_text(json.dumps(record), encoding="utf-8")
+
+    result = preflight.verify_max_parallel_artifact(
+        exp_dir, "pair-1", partition="acc", now=now
+    )
+
+    assert result["max_parallel"] == 4
+    assert result["artifact_path"] == "pair-1/max_parallel.json"
+
+
+def test_pending_submit_query_requires_two_slots_without_recording_raw_output():
+    preflight = _module("preflight")
+    runtime = {"sandbox_resources": {"nm5": {"partition": "acc", "qos": "acc_ehpc"}}}
+    environment = {"NM5_ACCOUNT": "private-account"}
+
+    def query(_command, **_kwargs):
+        command = _command
+        if command[0] != "squeue" and "assoc" in command:
+            output = "-1\n"
+        elif command[0] != "squeue":
+            output = "4\n"
+        else:
+            output = "RUNNING|private-account|acc_ehpc|acc\n"
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+    result = preflight.query_pending_submit_headroom(
+        runtime, environment, run_command=query, username="fixture-user"
+    )
+
+    assert result["pending_submit_headroom"] == 3
+    assert result["pending_submit_slots_verified"] == 2
+    assert "private-account" not in json.dumps(result)
+    assert "fixture-user" not in json.dumps(result)
+
+    def insufficient(command, **_kwargs):
+        if command[0] != "squeue" and "assoc" in command:
+            output = "-1\n"
+        elif command[0] != "squeue":
+            output = "2\n"
+        else:
+            output = "RUNNING|private-account|acc_ehpc|acc\n"
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+    with pytest.raises(RuntimeError, match="two-job dependency pair"):
+        preflight.query_pending_submit_headroom(
+            runtime, environment, run_command=insufficient, username="fixture-user"
+        )
+
+
+def test_preflight_cache_errors_name_only_the_private_environment_key():
+    preflight = _module("preflight")
+    config_module = _module("config")
+    runtime = config_module.load_runtime_config(
+        REPO_ROOT / "scale_up_outputs/looped_self_forcing_pipeline"
+    )
+    private_path = "/private-fixture/cache/sentinel"
+    env = {
+        source: private_path if source == "NM5_HF_HOME" else "/private-fixture/cache/other"
+        for source in runtime["environment"]["cache_env_sources"].values()
+    }
+
+    with pytest.raises(RuntimeError, match="NM5_HF_HOME") as caught:
+        preflight._check_private_cache_roots(runtime, env)
+    assert private_path not in str(caught.value)
+
+
+def test_full_pair_manifest_comparison_allows_only_scale_run_size_and_identity_changes():
+    preflight = _module("preflight")
+    smoke = {
+        "backend": "nm5",
+        "method": {
+            "lr": 4e-7,
+            "lr_critic": 4e-7,
+            "loss": {"dmd": 1.0, "cycle": 0.0},
+            "lora": {"enabled": True, "target_modules": ["self_attn.q", "self_attn.v"]},
+        },
+        "tracking": {"mode": "offline", "project": "shared-project"},
+        "scale": {"name": "smoke"},
+        "train": {
+            "max_steps": 10,
+            "log_iters": 10,
+            "timeout_seconds": 19800,
+            "seed": 1,
+            "checkpoint_interval_seconds": 3600,
+            "resume_checkpoint": None,
+        },
+        "assets": {"generator_checkpoint_sha256": "a" * 64},
+        "train_prompt": {"sha256": "b" * 64},
+        "run_id": "smoke-k3",
+        "resolved_config_sha256": "c" * 64,
+    }
+    full = json.loads(json.dumps(smoke))
+    full["scale"] = {"name": "full"}
+    full["train"].update(max_steps=600, log_iters=50, timeout_seconds=7200)
+    full["run_id"] = "full-k3"
+    full["resolved_config_sha256"] = "d" * 64
+
+    preflight.require_full_config_matches_smoke(smoke, full, profile="K3")
+    full["method"]["loss"]["cycle"] = 0.5
+    with pytest.raises(RuntimeError, match="differs from smoke"):
+        preflight.require_full_config_matches_smoke(smoke, full, profile="K3")
+
+
+def test_pair_preflight_runs_static_gates_for_both_profiles(monkeypatch, tmp_path: Path):
+    preflight = _module("preflight")
+    exp_dir = tmp_path / "bundle"
+    config_dir = exp_dir / "config"
+    config_dir.mkdir(parents=True)
+    source_config = REPO_ROOT / "scale_up_outputs/looped_self_forcing_pipeline/config"
+    shutil.copytree(source_config, config_dir, dirs_exist_ok=True)
+    (exp_dir / "envs/hydra_overlay").mkdir(parents=True)
+    deepresearch_root = tmp_path / "deepresearch"
+    workspace = deepresearch_root / "workspace/looped-flow-matching"
+    workspace.mkdir(parents=True)
+    asset_root = tmp_path / "assets"
+    (asset_root / "checkpoints").mkdir(parents=True)
+    (asset_root / "wan_models").mkdir()
+    caches = {}
+    for source in (
+        "NM5_HF_HOME",
+        "NM5_HF_HUB_CACHE",
+        "NM5_MODELSCOPE_CACHE",
+        "NM5_TORCH_HOME",
+        "NM5_MPLCONFIGDIR",
+        "NM5_WANDB_CACHE_DIR",
+    ):
+        cache = tmp_path / "private-cache" / source.lower()
+        cache.mkdir(parents=True)
+        caches[source] = str(cache)
+    capacity = exp_dir / "preflight-pair/max_parallel.json"
+    capacity.parent.mkdir(parents=True)
+    capacity.write_text(
+        json.dumps(
+            {
+                "timestamp": __import__("datetime").datetime.now(
+                    __import__("datetime").timezone.utc
+                ).isoformat(),
+                "sandbox": "nm5",
+                "partition": "acc",
+                "max_parallel": 4,
+                "limiting_factor": "one four-GPU job per node",
+                "evidence": {"queue": "redacted summary"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    environment = {
+        "NM5_DEEPRESEARCH_ROOT": str(deepresearch_root),
+        "SUE_WORKSPACE_ROOT": str(workspace),
+        "SUE_EXP_DIR": str(exp_dir),
+        "SUE_PYTHON": sys.executable,
+        "SUE_ASSET_ROOT": str(asset_root),
+        "SUE_PYTHONPATH": str(exp_dir / "envs/hydra_overlay"),
+        "NM5_ACCOUNT": "fixture-account",
+        "HOME": str(tmp_path / "empty-home"),
+        **caches,
+    }
+    Path(environment["HOME"]).mkdir()
+    checked = []
+    def fake_slurm_query(command, **_kwargs):
+        if command[0] == "sacctmgr" and "assoc" in command:
+            output = "-1\n"
+        elif command[0] == "sacctmgr":
+            output = "4\n"
+        else:
+            output = "RUNNING|fixture-account|acc_ehpc|acc\n"
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+    import_module = preflight.importlib.import_module
+    monkeypatch.setattr(
+        preflight.importlib,
+        "import_module",
+        lambda name: object() if name == "wandb" else import_module(name),
+    )
+    result = preflight.run_pair_preflight(
+        "preflight-pair",
+        ["scale=smoke"],
+        environment=environment,
+        run_command=fake_slurm_query,
+        check_stage_fn=lambda config, stage, *, exp_dir: checked.append(
+            (config.method.profile_id, stage, config.run_id)
+        ),
+    )
+
+    assert checked == [
+        ("layerwise_l23_30_k3_lr5gen", "train", "preflight-pair-k3-lr5gen"),
+        ("layerwise_l23_30_k2_lr5both", "train", "preflight-pair-k2-lr5both"),
+    ]
+    assert result["effective_gpu_parallel"] == 1
+    assert result["pending_submit"]["headroom"] == 3
+    pending_report_path = exp_dir / result["pending_submit"]["artifact_path"]
+    pending_report = pending_report_path.read_text(encoding="utf-8")
+    assert "fixture-account" not in pending_report
+    assert "RUNNING|" not in pending_report
+    report_path = preflight.write_pair_preflight_report(exp_dir, result)
+    report_text = report_path.read_text(encoding="utf-8")
+    assert report_path.relative_to(exp_dir).as_posix() == "artifacts/pairs/preflight-pair/preflight.json"
+    assert str(exp_dir) not in report_text
+    assert "preflight-pair/max_parallel.json" in report_text
+    assert "pending_submit_preflight.json" in report_text
 
 
 def test_runtime_output_roots_reject_escape_paths(tmp_path: Path):
@@ -180,14 +519,22 @@ def test_runtime_output_roots_reject_escape_paths(tmp_path: Path):
     config.write_text(
         "paths:\n"
         "  config_root: config\n"
+        "  autotune_hyperparam_root: autotune_hyperparam\n"
         "  datasets_root: datasets\n"
         "  slurm_scripts_root: slurm_scripts\n"
         "  artifacts_root: ../outside\n"
         "  ckpt_root: ckpt\n"
         "  final_result_root: final_result\n"
         "  logs_root: logs\n"
+        "  state_root: state\n"
+        "  readiness_root: readiness\n"
+        "  ledger_csv: artifacts/experiment_results.csv\n"
+        "backend: {primary: nm5}\n"
+        "sandbox_script_folders: {nm5: slurm_scripts}\n"
+        "sandbox_resources: {nm5: {partition: acc, qos: acc_ehpc, gpus_per_node: 4, gpu_type: H100, gpu_usable_memory_gib: 63.29, gpu_non_torch_reserve_gib: 7.0, max_nodes_per_job: 1, cpus_per_gpu: 20, timeout_kill_after_seconds: 300, finalization_grace_seconds: 600, train_gpus: 4, infer_gpus: 1}}\n"
+        "backend_env: {nm5: {source_note: deepresearch-sandbox/config_nm5.txt, required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, WANDB_API_KEY, WANDB_ENTITY]}}\n"
+        "environment: {env_manager: conda, env_root: scale_up_outputs/envs, python_binary: scale_up_outputs/envs/miniconda3/envs/looped-self-forcing/bin/python, asset_root: Self-Forcing-blockwise-layerwise, python_overlay: envs/hydra_overlay, allowed_external_roots: [scale_up_outputs/envs, Self-Forcing-blockwise-layerwise], cache_env_sources: {HF_HOME: NM5_HF_HOME, HF_HUB_CACHE: NM5_HF_HUB_CACHE, MODELSCOPE_CACHE: NM5_MODELSCOPE_CACHE, TORCH_HOME: NM5_TORCH_HOME, MPLCONFIGDIR: NM5_MPLCONFIGDIR, WANDB_CACHE_DIR: NM5_WANDB_CACHE_DIR}}\n"
         "policy:\n"
-        "  sandbox_resources: {}\n"
         "  wandb_policy:\n"
         "    required: true\n",
         encoding="utf-8",
@@ -211,8 +558,15 @@ def test_runtime_config_root_is_fixed_for_the_bundle_bootstrap(tmp_path: Path):
         "  ckpt_root: ckpt\n"
         "  final_result_root: final_result\n"
         "  logs_root: logs\n"
+        "  state_root: state\n"
+        "  readiness_root: readiness\n"
+        "  ledger_csv: artifacts/experiment_results.csv\n"
+        "backend: {primary: nm5}\n"
+        "sandbox_script_folders: {nm5: slurm_scripts}\n"
+        "sandbox_resources: {nm5: {partition: acc, qos: acc_ehpc, gpus_per_node: 4, gpu_type: H100, gpu_usable_memory_gib: 63.29, gpu_non_torch_reserve_gib: 7.0, max_nodes_per_job: 1, cpus_per_gpu: 20, timeout_kill_after_seconds: 300, finalization_grace_seconds: 600, train_gpus: 4, infer_gpus: 1}}\n"
+        "backend_env: {nm5: {source_note: deepresearch-sandbox/config_nm5.txt, required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, WANDB_API_KEY, WANDB_ENTITY]}}\n"
+        "environment: {env_manager: conda, env_root: scale_up_outputs/envs, python_binary: scale_up_outputs/envs/miniconda3/envs/looped-self-forcing/bin/python, asset_root: Self-Forcing-blockwise-layerwise, python_overlay: envs/hydra_overlay, allowed_external_roots: [scale_up_outputs/envs, Self-Forcing-blockwise-layerwise], cache_env_sources: {HF_HOME: NM5_HF_HOME, HF_HUB_CACHE: NM5_HF_HUB_CACHE, MODELSCOPE_CACHE: NM5_MODELSCOPE_CACHE, TORCH_HOME: NM5_TORCH_HOME, MPLCONFIGDIR: NM5_MPLCONFIGDIR, WANDB_CACHE_DIR: NM5_WANDB_CACHE_DIR}}\n"
         "policy:\n"
-        "  sandbox_resources: {}\n"
         "  wandb_policy:\n"
         "    required: true\n",
         encoding="utf-8",
@@ -271,14 +625,22 @@ def test_check_assets_uses_explicit_exp_dir_instead_of_environment(tmp_path: Pat
     runtime.write_text(
         "paths:\n"
         "  config_root: config\n"
+        "  autotune_hyperparam_root: autotune_hyperparam\n"
         "  datasets_root: datasets\n"
         "  slurm_scripts_root: slurm_scripts\n"
         "  artifacts_root: artifacts\n"
         "  ckpt_root: ckpt\n"
         "  final_result_root: final_result\n"
         "  logs_root: logs\n"
+        "  state_root: state\n"
+        "  readiness_root: readiness\n"
+        "  ledger_csv: artifacts/experiment_results.csv\n"
+        "backend: {primary: nm5}\n"
+        "sandbox_script_folders: {nm5: slurm_scripts}\n"
+        "sandbox_resources: {nm5: {partition: acc, qos: acc_ehpc, gpus_per_node: 4, gpu_type: H100, gpu_usable_memory_gib: 63.29, gpu_non_torch_reserve_gib: 7.0, max_nodes_per_job: 1, cpus_per_gpu: 20, timeout_kill_after_seconds: 300, finalization_grace_seconds: 600, train_gpus: 4, infer_gpus: 1}}\n"
+        "backend_env: {nm5: {source_note: deepresearch-sandbox/config_nm5.txt, required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, WANDB_API_KEY, WANDB_ENTITY]}}\n"
+        "environment: {env_manager: conda, env_root: scale_up_outputs/envs, python_binary: scale_up_outputs/envs/miniconda3/envs/looped-self-forcing/bin/python, asset_root: Self-Forcing-blockwise-layerwise, python_overlay: envs/hydra_overlay, allowed_external_roots: [scale_up_outputs/envs, Self-Forcing-blockwise-layerwise], cache_env_sources: {HF_HOME: NM5_HF_HOME, HF_HUB_CACHE: NM5_HF_HUB_CACHE, MODELSCOPE_CACHE: NM5_MODELSCOPE_CACHE, TORCH_HOME: NM5_TORCH_HOME, MPLCONFIGDIR: NM5_MPLCONFIGDIR, WANDB_CACHE_DIR: NM5_WANDB_CACHE_DIR}}\n"
         "policy:\n"
-        "  sandbox_resources: {}\n"
         "  wandb_policy:\n"
         "    required: true\n",
         encoding="utf-8",

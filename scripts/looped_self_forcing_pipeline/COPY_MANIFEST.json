@@ -1,5 +1,5 @@
 {
-  "description": "Code-only baseline migration from the prior NM5 pipeline. Source files are copied byte-for-byte; runtime assets, generated outputs, datasets, and caches are excluded.",
+  "description": "Code-only baseline migration from the prior NM5 pipeline. Model and temporal-loop math are preserved; the memory probe adds per-rank labels. Runtime assets, generated outputs, datasets, and caches are excluded.",
   "files": [
     {
       "copy": "source/demo_utils/constant.py",
@@ -129,7 +129,7 @@
     {
       "copy": "source/train_blockwise_lora_dmd.py",
       "origin": "scripts/train_blockwise_lora_dmd.py",
-      "sha256": "b07d6bcd164a1391e8af3c8e9f283784761af0a6cb72eb8ed114e68184e650d9"
+      "sha256": "26700a2221316412d2d711a09730d55b0c2f0483f3b8661270dc02734c0b347d"
     },
     {
       "copy": "source/trainer/__init__.py",

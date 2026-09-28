@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,6 +18,188 @@ def _module(name: str):
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
     return importlib.import_module(f"looped_self_forcing_pipeline.{name}")
+
+
+def _write_valid_smoke_pair(exp_dir: Path, pair_id: str = "smoke-pair"):
+    torch = pytest.importorskip("torch")
+    config_module = _module("config")
+    manifest_module = _module("manifest")
+    ledger_module = _module("ledger")
+    roots = config_module.resolve_runtime_paths(exp_dir)
+    capacity_path = exp_dir / pair_id / "max_parallel.json"
+    capacity_path.parent.mkdir(parents=True)
+    capacity_path.write_text(
+        json.dumps(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "sandbox": "nm5",
+                "partition": "acc",
+                "max_parallel": 4,
+                "limiting_factor": "one four-GPU job per node",
+                "evidence": {"queue_summary": "redacted"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    definitions = (
+        ("layerwise_l23_30_k3_lr5gen", "k3-lr5gen", 3, 4e-7, 4e-7),
+        ("layerwise_l23_30_k2_lr5both", "k2-lr5both", 2, 4e-7, 8e-8),
+    )
+    job_ids = []
+    for profile, suffix, k, lr, lr_critic in definitions:
+        run_id = f"{pair_id}-{suffix}"
+        job_id = str(50100 + len(job_ids) + 1)
+        job_ids.append(job_id)
+        method = {
+            "temporal_loop": {
+                "mode": "layer",
+                "layer_start": 22,
+                "layer_end": 29,
+                "k_min": k,
+                "k_max": k,
+                "training_enabled": True,
+                "stop_grad_early": True,
+            },
+            "lora": {"enabled": True, "target_modules": ["self_attn.q", "self_attn.v"]},
+            "lr": lr,
+            "lr_critic": lr_critic,
+        }
+        train = {"max_steps": 10, "seed": 1}
+        base_hash = "a" * 64
+        manifest_config = {
+            "backend": "nm5",
+            "method": method,
+            "train": train,
+            "assets": {"generator_checkpoint_sha256": base_hash},
+        }
+        manifest_root = roots["artifacts_root"] / run_id / "config" / "train"
+        manifest_module.materialize_manifest(manifest_root, "train", manifest_config)
+
+        checkpoint_root = roots["ckpt_root"] / run_id
+        checkpoint_root.mkdir(parents=True)
+        torch.save(
+            {
+                "metadata": {
+                    "step": 10,
+                    "seed": 1,
+                    "final": True,
+                    "base_checkpoint_sha256": base_hash,
+                    "temporal_loop": {
+                        "mode": "layer",
+                        "layer_start": 22,
+                        "layer_end": 29,
+                        "k_min": k,
+                        "k_max": k,
+                        "training_enabled": True,
+                        "stop_grad_early": True,
+                    },
+                },
+                "generator": {"lora.weight": torch.ones(2, dtype=torch.float32)},
+            },
+            checkpoint_root / "latest.pt",
+        )
+        (checkpoint_root / "model.pt").write_bytes(b"lightweight-final-model")
+
+        run_root = roots["artifacts_root"] / run_id
+        (run_root / "wandb_run_id.txt").write_text("wandb-smoke-id\n", encoding="utf-8")
+        wandb_dir = run_root / "wandb"
+        wandb_dir.mkdir()
+        (wandb_dir / "offline-run-smoke.wandb").write_bytes(b"run")
+        output_log = roots["logs_root"] / f"{run_id}_train_{job_id}.out"
+        error_log = roots["logs_root"] / f"{run_id}_train_{job_id}.err"
+        output_log.parent.mkdir(parents=True, exist_ok=True)
+        lines = []
+        for rank in range(4):
+            lines.append(f"===== MEMPROBE rank={rank} deep trace at step 3 (train_generator=False) =====")
+            lines.append(
+                f"MEMPROBE step=3 rank={rank} step_exit: allocated=1.00GiB reserved=2.00GiB "
+                "frag=1.00GiB peak=3.00GiB"
+            )
+        lines.append("SUE_GPU_MODEL_PREFLIGHT passed expected=H100 count=4")
+        output_log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        error_log.write_text("", encoding="utf-8")
+        ledger_module.write_result(
+            roots["ledger_csv"],
+            {
+                "method": "layer",
+                "experiment_name": f"{profile}-{run_id}-train",
+                "wandb_run_id": "wandb-smoke-id",
+                "backend": "nm5",
+                "status": "completed",
+                "execution_id": job_id,
+                "slurm_job_id": job_id,
+                "seed": 1,
+                "step": 10,
+                "checkpoint_step": 10,
+                "training_speed": 1.0,
+                "checkpoint_or_output_path": str(checkpoint_root / "latest.pt"),
+            },
+        )
+    with roots["ledger_csv"].open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+    receipt_jobs = []
+    for profile, suffix, _k, _lr, _lr_critic in definitions:
+        run_id = f"{pair_id}-{suffix}"
+        row = next(row for row in rows if row["experiment_name"] == f"{profile}-{run_id}-train")
+        receipt_jobs.append(
+            {
+                "profile": profile,
+                "run_id": run_id,
+                "job_id": row["slurm_job_id"],
+                "submitted_at": datetime.fromisoformat(row["timestamp"]).isoformat(),
+            }
+        )
+    receipt_path = roots["artifacts_root"] / "pairs" / pair_id / "submission.json"
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "pair_id": pair_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "jobs": receipt_jobs,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return roots, job_ids
+
+
+def test_nm5_gpu_contract_rejects_non_h100_or_mixed_visible_devices():
+    worker = _module("worker")
+    h100_names = ["NVIDIA H100 80GB HBM3"] * 4
+
+    assert worker.require_gpu_model_names(
+        h100_names, expected_model="H100", expected_count=4
+    ) == tuple(h100_names)
+    with pytest.raises(RuntimeError, match="device model mismatch"):
+        worker.require_gpu_model_names(
+            [*h100_names[:3], "NVIDIA A100-SXM4-80GB"],
+            expected_model="H100",
+            expected_count=4,
+        )
+    with pytest.raises(RuntimeError, match="exactly 4"):
+        worker.require_gpu_model_names(
+            h100_names[:3], expected_model="H100", expected_count=4
+        )
+
+
+def test_nm5_worker_timeout_uses_configured_kill_after_grace():
+    worker = _module("worker")
+    config = SimpleNamespace(
+        backend=SimpleNamespace(name="nm5"),
+        train={"timeout_seconds": 123},
+    )
+    prepared = {
+        "timeout_kill_after_seconds": 300,
+        "config_path": Path("train.yaml"),
+        "checkpoint_root": Path("checkpoints/run"),
+        "run_root": Path("artifacts/run"),
+    }
+
+    command = worker._command_for(config, "train", prepared)
+
+    assert command[:5] == ["timeout", "-s", "TERM", "--kill-after=300", "123"]
 
 
 def test_training_evidence_requires_exact_step_and_finite_state(tmp_path: Path):
@@ -144,6 +327,139 @@ def test_inference_evidence_accepts_full_489_frame_16_fps_output(tmp_path: Path)
     ) == [video]
 
 
+def test_smoke_pair_requires_four_gpu_step_three_probe_and_matching_run_evidence(tmp_path: Path):
+    exp_dir = tmp_path / "bundle"
+    config_dir = exp_dir / "config"
+    config_dir.mkdir(parents=True)
+    source_runtime = Path(__file__).resolve().parents[1] / (
+        "scale_up_outputs/looped_self_forcing_pipeline/config/runtime.yaml"
+    )
+    (config_dir / "runtime.yaml").write_bytes(source_runtime.read_bytes())
+    _, job_ids = _write_valid_smoke_pair(exp_dir)
+    verification = _module("verification")
+
+    def completed_sacct(command, **_kwargs):
+        job_id = command[command.index("-j") + 1]
+        assert job_id in job_ids
+        return SimpleNamespace(
+            returncode=0,
+            stdout=f"{job_id}|COMPLETED\n{job_id}.batch|COMPLETED\n",
+            stderr="",
+        )
+
+    evidence = verification.verify_smoke_pair_evidence(
+        exp_dir, "smoke-pair", run_command=completed_sacct
+    )
+
+    assert [item["job_id"] for item in evidence] == job_ids
+    assert [item["k"] for item in evidence] == [3, 2]
+    assert [item["probe_peak_gib"] for item in evidence] == [[3.0] * 4, [3.0] * 4]
+    assert [item["probe_reserved_gib"] for item in evidence] == [[2.0] * 4, [2.0] * 4]
+    assert [item["reserved_memory_headroom_gib"] for item in evidence] == [61.29, 61.29]
+    assert [item["reserved_memory_headroom_by_rank_gib"] for item in evidence] == [
+        [61.29] * 4,
+        [61.29] * 4,
+    ]
+
+
+def test_smoke_readiness_stamp_is_relative_immutable_and_rechecks_hashes(tmp_path: Path):
+    exp_dir = tmp_path / "bundle"
+    config_dir = exp_dir / "config"
+    config_dir.mkdir(parents=True)
+    source_runtime = Path(__file__).resolve().parents[1] / (
+        "scale_up_outputs/looped_self_forcing_pipeline/config/runtime.yaml"
+    )
+    (config_dir / "runtime.yaml").write_bytes(source_runtime.read_bytes())
+    roots, job_ids = _write_valid_smoke_pair(exp_dir)
+    verification = _module("verification")
+
+    def completed_sacct(command, **_kwargs):
+        job_id = command[command.index("-j") + 1]
+        assert job_id in job_ids
+        return SimpleNamespace(returncode=0, stdout=f"{job_id}|COMPLETED\n", stderr="")
+
+    evidence = verification.verify_smoke_pair_evidence(
+        exp_dir, "smoke-pair", run_command=completed_sacct
+    )
+    stamp = verification.write_smoke_readiness_stamp(exp_dir, "smoke-pair", evidence)
+    stamp_text = stamp.read_text(encoding="utf-8")
+    assert stamp.relative_to(exp_dir).as_posix() == "readiness/layerwise_23_30_smoke-pair.json"
+    assert "smoke-pair/max_parallel.json" in stamp_text
+    assert str(exp_dir) not in stamp_text
+
+    checked_stamp, checked_evidence = verification.verify_smoke_readiness_stamp(
+        exp_dir, "smoke-pair", run_command=completed_sacct
+    )
+    assert checked_stamp == stamp
+    assert [item["run_id"] for item in checked_evidence] == [
+        "smoke-pair-k3-lr5gen",
+        "smoke-pair-k2-lr5both",
+    ]
+
+    log = roots["logs_root"] / f"smoke-pair-k3-lr5gen_train_{job_ids[0]}.out"
+    with log.open("a", encoding="utf-8") as stream:
+        stream.write("tampered after readiness stamp\n")
+    with pytest.raises(RuntimeError, match="hashes or evidence"):
+        verification.verify_smoke_readiness_stamp(
+            exp_dir, "smoke-pair", run_command=completed_sacct
+        )
+
+
+@pytest.mark.parametrize("failure", ["pending", "missing-probe", "missing-gpu-model", "oom", "high-reserved"])
+def test_smoke_pair_rejects_incomplete_scheduler_or_memory_probe_evidence(
+    tmp_path: Path, failure: str
+):
+    exp_dir = tmp_path / "bundle"
+    config_dir = exp_dir / "config"
+    config_dir.mkdir(parents=True)
+    source_runtime = Path(__file__).resolve().parents[1] / (
+        "scale_up_outputs/looped_self_forcing_pipeline/config/runtime.yaml"
+    )
+    (config_dir / "runtime.yaml").write_bytes(source_runtime.read_bytes())
+    roots, job_ids = _write_valid_smoke_pair(exp_dir)
+    verification = _module("verification")
+    if failure == "missing-probe":
+        first_run = "smoke-pair-k3-lr5gen"
+        (roots["logs_root"] / f"{first_run}_train_{job_ids[0]}.out").write_text(
+            "SUE_GPU_MODEL_PREFLIGHT passed expected=H100 count=4\n"
+            "===== MEMPROBE rank=0 deep trace at step 3 =====\n",
+            encoding="utf-8",
+        )
+    elif failure == "missing-gpu-model":
+        first_run = "smoke-pair-k3-lr5gen"
+        output_log = roots["logs_root"] / f"{first_run}_train_{job_ids[0]}.out"
+        output_log.write_text(
+            output_log.read_text(encoding="utf-8").replace(
+                "SUE_GPU_MODEL_PREFLIGHT passed expected=H100 count=4\n", ""
+            ),
+            encoding="utf-8",
+        )
+    elif failure == "oom":
+        first_run = "smoke-pair-k3-lr5gen"
+        with (roots["logs_root"] / f"{first_run}_train_{job_ids[0]}.err").open("w") as stream:
+            stream.write("RuntimeError: CUDA out of memory\n")
+    elif failure == "high-reserved":
+        first_run = "smoke-pair-k3-lr5gen"
+        output_log = roots["logs_root"] / f"{first_run}_train_{job_ids[0]}.out"
+        output_log.write_text(
+            output_log.read_text(encoding="utf-8").replace(
+                "rank=2 step_exit: allocated=1.00GiB reserved=2.00GiB",
+                "rank=2 step_exit: allocated=58.00GiB reserved=60.00GiB",
+            ),
+            encoding="utf-8",
+        )
+
+    def sacct(command, **_kwargs):
+        job_id = command[command.index("-j") + 1]
+        state = "RUNNING" if failure == "pending" else "COMPLETED"
+        return SimpleNamespace(returncode=0, stdout=f"{job_id}|{state}\n", stderr="")
+
+    with pytest.raises(RuntimeError, match="COMPLETED|MEMPROBE|out of memory|OOM evidence|H100|reserved-memory|rank-labelled|model check"):
+        verification.verify_smoke_pair_evidence(
+            exp_dir, "smoke-pair", run_command=sacct
+        )
+
+
 def test_inference_evidence_rejects_wrong_frame_rate(tmp_path: Path):
     worker = _module("worker")
     outputs = tmp_path / "output"
@@ -234,6 +550,8 @@ def test_training_worker_environment_preserves_online_mode_for_source_wrapper(
 ):
     worker = _module("worker")
     monkeypatch.setenv("WANDB_ENTITY", "team")
+    overlay = str(tmp_path / "hydra-overlay")
+    monkeypatch.setenv("SUE_PYTHONPATH", overlay)
     config = SimpleNamespace(
         backend=SimpleNamespace(name="autodl"),
         tracking={"mode": "online", "required": True, "project": "shared-project"},
@@ -256,6 +574,7 @@ def test_training_worker_environment_preserves_online_mode_for_source_wrapper(
     assert environment["WANDB_PROJECT"] == "shared-project"
     assert environment["SUE_WANDB_RUN_ID_PATH"] == str(run_root / "wandb_run_id.txt")
     assert environment["SUE_BASE_CHECKPOINT_RELATIVE_PATH"] == "checkpoints/base.pt"
+    assert environment["PYTHONPATH"].split(":")[0] == overlay
 
 
 def test_inference_tracking_starts_required_run_and_records_actual_run_id(
@@ -349,17 +668,22 @@ def test_worker_marks_early_preflight_failure_in_ledger(tmp_path: Path, monkeypa
     runtime.write_text(
         "paths:\n"
         "  config_root: config\n"
+        "  autotune_hyperparam_root: autotune_hyperparam\n"
         "  datasets_root: datasets\n"
         "  slurm_scripts_root: slurm_scripts\n"
         "  artifacts_root: artifacts\n"
         "  ckpt_root: ckpt\n"
         "  final_result_root: final_result\n"
         "  logs_root: logs\n"
+        "  state_root: state\n"
+        "  readiness_root: readiness\n"
+        "  ledger_csv: artifacts/experiment_results.csv\n"
+        "backend: {primary: nm5}\n"
+        "sandbox_script_folders: {nm5: slurm_scripts}\n"
+        "sandbox_resources: {nm5: {partition: acc, qos: acc_ehpc, gpus_per_node: 4, gpu_type: H100, gpu_usable_memory_gib: 63.29, gpu_non_torch_reserve_gib: 7.0, max_nodes_per_job: 1, cpus_per_gpu: 20, timeout_kill_after_seconds: 300, finalization_grace_seconds: 600, train_gpus: 4, infer_gpus: 1}}\n"
+        "backend_env: {nm5: {source_note: deepresearch-sandbox/config_nm5.txt, required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, WANDB_API_KEY, WANDB_ENTITY]}}\n"
+        "environment: {env_manager: conda, env_root: scale_up_outputs/envs, python_binary: scale_up_outputs/envs/miniconda3/envs/looped-self-forcing/bin/python, asset_root: Self-Forcing-blockwise-layerwise, python_overlay: envs/hydra_overlay, allowed_external_roots: [scale_up_outputs/envs, Self-Forcing-blockwise-layerwise], cache_env_sources: {HF_HOME: NM5_HF_HOME, HF_HUB_CACHE: NM5_HF_HUB_CACHE, MODELSCOPE_CACHE: NM5_MODELSCOPE_CACHE, TORCH_HOME: NM5_TORCH_HOME, MPLCONFIGDIR: NM5_MPLCONFIGDIR, WANDB_CACHE_DIR: NM5_WANDB_CACHE_DIR}}\n"
         "policy:\n"
-        "  sandbox_resources:\n"
-        "    autodl:\n"
-        "      train_gpus: 4\n"
-        "      infer_gpus: 1\n"
         "  wandb_policy:\n"
         "    required: true\n",
         encoding="utf-8",
@@ -403,17 +727,35 @@ def test_completed_training_ledger_seed_matches_checkpoint_evidence(
     runtime.write_text(
         "paths:\n"
         "  config_root: config\n"
+        "  autotune_hyperparam_root: autotune_hyperparam\n"
         "  datasets_root: datasets\n"
         "  slurm_scripts_root: slurm_scripts\n"
         "  artifacts_root: artifacts\n"
         "  ckpt_root: ckpt\n"
         "  final_result_root: final_result\n"
         "  logs_root: logs\n"
+        "  state_root: state\n"
+        "  readiness_root: readiness\n"
+        "  ledger_csv: artifacts/experiment_results.csv\n"
+        "backend: {primary: nm5}\n"
+        "sandbox_script_folders: {nm5: slurm_scripts}\n"
+        "sandbox_resources:\n"
+        "  nm5:\n"
+        "    partition: acc\n"
+        "    qos: acc_ehpc\n"
+        "    gpus_per_node: 4\n"
+        "    gpu_type: H100\n"
+        "    gpu_usable_memory_gib: 63.29\n"
+        "    gpu_non_torch_reserve_gib: 7.0\n"
+        "    timeout_kill_after_seconds: 300\n"
+        "    finalization_grace_seconds: 600\n"
+        "    max_nodes_per_job: 1\n"
+        "    cpus_per_gpu: 20\n"
+        "    train_gpus: 4\n"
+        "    infer_gpus: 1\n"
+        "backend_env: {nm5: {source_note: deepresearch-sandbox/config_nm5.txt, required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, WANDB_API_KEY, WANDB_ENTITY]}}\n"
+        "environment: {env_manager: conda, env_root: scale_up_outputs/envs, python_binary: scale_up_outputs/envs/miniconda3/envs/looped-self-forcing/bin/python, asset_root: Self-Forcing-blockwise-layerwise, python_overlay: envs/hydra_overlay, allowed_external_roots: [scale_up_outputs/envs, Self-Forcing-blockwise-layerwise], cache_env_sources: {HF_HOME: NM5_HF_HOME, HF_HUB_CACHE: NM5_HF_HUB_CACHE, MODELSCOPE_CACHE: NM5_MODELSCOPE_CACHE, TORCH_HOME: NM5_TORCH_HOME, MPLCONFIGDIR: NM5_MPLCONFIGDIR, WANDB_CACHE_DIR: NM5_WANDB_CACHE_DIR}}\n"
         "policy:\n"
-        "  sandbox_resources:\n"
-        "    nm5:\n"
-        "      train_gpus: 4\n"
-        "      infer_gpus: 1\n"
         "  wandb_policy:\n"
         "    required: false\n",
         encoding="utf-8",

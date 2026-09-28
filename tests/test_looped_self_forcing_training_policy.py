@@ -157,10 +157,15 @@ def test_wandb_init_persists_the_actual_run_id_for_the_parent_worker(
 
 
 def test_wandb_config_redacts_backend_paths_but_keeps_execution_values(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch
 ):
     policy = _module()
     observed = {}
+    monkeypatch.setenv("SUE_BACKEND", "nm5")
+    monkeypatch.setenv("SUE_RUN_ID", "run-1")
+    monkeypatch.setenv("SUE_WANDB_MODE", "offline")
+    monkeypatch.setenv("WANDB_EXPERIMENT_NAME", "layer-profile-run-1-train")
+    monkeypatch.setenv("WANDB_PROJECT", "comparison-project")
 
     class Trainer:
         def save(self):
@@ -203,7 +208,84 @@ def test_wandb_config_redacts_backend_paths_but_keeps_execution_values(
         "wandb_host": "<redacted>",
         "nested": {"wandb_save_dir": "wandb"},
         "max_steps": 10,
+        "train": {
+            "max_steps": 10,
+            "checkpoint_interval_seconds": 3600,
+            "scalar_log_interval": 100,
+            "progress_log_interval": 10,
+        },
+        "sue_runtime": {
+            "backend": "nm5",
+            "run_id": "run-1",
+            "stage": "train",
+            "experiment_name": "layer-profile-run-1-train",
+            "tracking_mode": "offline",
+            "project": "comparison-project",
+        },
     }
     assert private_root not in repr(observed["config"])
     assert "private-api-key-value" not in repr(observed["config"])
     assert run_config["generator_ckpt"].startswith(private_root)
+
+
+def test_wandb_config_includes_manifest_training_scale_and_runtime_identity(
+    tmp_path: Path, monkeypatch
+):
+    policy = _module()
+    observed = {}
+    monkeypatch.setenv("SUE_BACKEND", "nm5")
+    monkeypatch.setenv("SUE_RUN_ID", "pair-k3-lr5gen")
+    monkeypatch.setenv("SUE_WANDB_MODE", "offline")
+    monkeypatch.setenv(
+        "WANDB_EXPERIMENT_NAME", "layerwise_l23_30_k3_lr5gen-pair-k3-lr5gen-train"
+    )
+    monkeypatch.setenv("WANDB_PROJECT", "looped-self-forcing-lora-dmd")
+
+    class Trainer:
+        def save(self):
+            pass
+
+        def fwdbwd_one_step(self, batch, train_generator, *args, **kwargs):
+            return None
+
+    def init(**kwargs):
+        observed.update(kwargs)
+        return SimpleNamespace(id="run-id")
+
+    wandb = SimpleNamespace(init=init, log=lambda *_args, **_kwargs: None, run=None)
+    policy.install_training_policy(
+        Trainer,
+        wandb,
+        max_steps=37,
+        checkpoint_interval_seconds=180,
+        scalar_log_interval=100,
+        progress_log_interval=10,
+        asset_root=tmp_path,
+    )
+    run_config = {
+        "seed": 1,
+        "log_iters": 5,
+        "lr": 4e-7,
+        "lr_critic": 4e-7,
+        "distribution_loss": "dmd",
+        "temporal_loop": {"layer_start": 22, "layer_end": 29, "k_min": 3, "k_max": 3},
+        "lora": {"rank": 8},
+    }
+
+    wandb.init(config=run_config)
+    saved = observed["config"]
+
+    assert saved["train"]["max_steps"] == 37
+    assert saved["train"]["seed"] == 1
+    assert saved["train"]["log_iters"] == 5
+    assert saved["train"]["checkpoint_interval_seconds"] == 180
+    assert saved["lr"] == 4e-7 and saved["lr_critic"] == 4e-7
+    assert saved["distribution_loss"] == "dmd"
+    assert saved["sue_runtime"] == {
+        "backend": "nm5",
+        "run_id": "pair-k3-lr5gen",
+        "stage": "train",
+        "experiment_name": "layerwise_l23_30_k3_lr5gen-pair-k3-lr5gen-train",
+        "tracking_mode": "offline",
+        "project": "looped-self-forcing-lora-dmd",
+    }

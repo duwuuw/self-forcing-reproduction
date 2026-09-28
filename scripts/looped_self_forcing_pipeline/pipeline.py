@@ -29,6 +29,9 @@ _COMMANDS = (
     "record-submit",
     "submit-plan",
     "resolve-experiment-name",
+    "verify-smoke-pair",
+    "record-smoke-readiness",
+    "check-smoke-readiness",
 )
 
 
@@ -44,6 +47,7 @@ def _parse_args(argv: Sequence[str] | None = None):
     parser.add_argument("command", nargs="?", choices=_COMMANDS, default="show-config")
     parser.add_argument("--exp-dir", help="resolved SUE experiment directory; defaults to SUE_EXP_DIR")
     parser.add_argument("--job-id", default="", help="scheduler or detached-session identifier")
+    parser.add_argument("--smoke-pair-id", help="pair ID whose smoke evidence must pass before fullrun")
     args, overrides = parser.parse_known_args(tokens)
     if any(value.startswith("--") for value in overrides):
         parser.error("Hydra overrides must use key=value syntax")
@@ -131,7 +135,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         stage_seed = int(
             config.train.seed if str(config.stage.name) == "train" else config.infer.seed
         )
-        ledger_path = runtime_paths["artifacts_root"] / "experiment_results.csv"
+        ledger_path = runtime_paths["ledger_csv"]
         write_result(
             ledger_path,
             {
@@ -159,6 +163,36 @@ def main(argv: Sequence[str] | None = None) -> int:
             str(config.stage.name),
         )
         print(name)
+        return 0
+
+    if args.command in {
+        "verify-smoke-pair",
+        "record-smoke-readiness",
+        "check-smoke-readiness",
+    }:
+        if not args.smoke_pair_id:
+            parser.error(f"{args.command} requires --smoke-pair-id")
+        from looped_self_forcing_pipeline.verification import (
+            verify_smoke_pair_evidence,
+            verify_smoke_readiness_stamp,
+            write_smoke_readiness_stamp,
+        )
+
+        if args.command == "check-smoke-readiness":
+            stamp_path, evidence = verify_smoke_readiness_stamp(exp_dir, args.smoke_pair_id)
+            stamp_label = stamp_path.relative_to(exp_dir).as_posix()
+            print(f"smoke readiness verified: {stamp_label}")
+        else:
+            evidence = verify_smoke_pair_evidence(exp_dir, args.smoke_pair_id)
+            if args.command == "record-smoke-readiness":
+                stamp_path = write_smoke_readiness_stamp(exp_dir, args.smoke_pair_id, evidence)
+                print(f"smoke readiness recorded: {stamp_path.relative_to(exp_dir).as_posix()}")
+        for run in evidence:
+            peaks = ",".join(f"{value:.2f}" for value in run["probe_peak_gib"])
+            print(
+                f"verified smoke profile={run['profile']} job_id={run['job_id']} "
+                f"step={run['max_steps']} seed={run['seed']} step3_peak_gib={peaks}"
+            )
         return 0
 
     if args.command == "submit-plan":

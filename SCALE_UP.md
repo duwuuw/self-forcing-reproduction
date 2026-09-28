@@ -71,6 +71,15 @@ Workspace-specific lessons. Generic cross-workspace lessons live in
 - **correct**: Require the launcher to pass the durable `SUE_EXP` path and source `"$SUE_EXP/slurm_scripts/common_env.sh"`; keep generated logs and scripts under the configured experiment directory.
 - **source**: workspace/looped-flow-matching
 
+### Resolve new pipeline assets from its runtime contract
+- **sandbox**: NM5
+- **session**: dryrun
+- **date**: 2026-09-28
+- **trigger**: The backend-neutral pipeline uses a different Self-Forcing asset checkout than the older workspace launchers.
+- **wrong**: Reusing the legacy `Self-Forcing/` asset path for the new pipeline or putting an absolute remote asset root in tracked configuration.
+- **correct**: Read `environment.asset_root` from `scale_up_outputs/looped_self_forcing_pipeline/config/runtime.yaml`; resolve it relative to the configured `NM5_WORKSPACE_ROOT`, and let preflight verify the checkpoint and model trees. Keep absolute roots in ignored NM5 configuration.
+- **source**: workspace/looped-flow-matching
+
 ### Brace Slurm variable expansions when appending suffixes
 - **sandbox**: NM5
 - **session**: dryrun

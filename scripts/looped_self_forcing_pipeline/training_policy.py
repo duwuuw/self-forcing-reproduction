@@ -178,7 +178,28 @@ def install_training_policy(
     def init_with_run_id(*args, **kwargs):
         kwargs = dict(kwargs)
         if isinstance(kwargs.get("config"), dict):
-            kwargs["config"] = _sanitize_wandb_config(kwargs["config"])
+            run_config = _sanitize_wandb_config(kwargs["config"])
+            train_config = dict(run_config.get("train") or {})
+            train_config.update({
+                "max_steps": max_steps,
+                "checkpoint_interval_seconds": checkpoint_interval_seconds,
+                "scalar_log_interval": scalar_log_interval,
+                "progress_log_interval": progress_log_interval,
+            })
+            if run_config.get("seed") is not None:
+                train_config["seed"] = run_config["seed"]
+            if run_config.get("log_iters") is not None:
+                train_config["log_iters"] = run_config["log_iters"]
+            run_config["train"] = train_config
+            run_config["sue_runtime"] = {
+                "backend": os.environ.get("SUE_BACKEND", ""),
+                "run_id": os.environ.get("SUE_RUN_ID", ""),
+                "stage": os.environ.get("SUE_STAGE", "train"),
+                "experiment_name": os.environ.get("WANDB_EXPERIMENT_NAME", ""),
+                "tracking_mode": os.environ.get("SUE_WANDB_MODE", "offline"),
+                "project": os.environ.get("WANDB_PROJECT", ""),
+            }
+            kwargs["config"] = run_config
         run = original_wandb_init(*args, **kwargs)
         target = os.environ.get("SUE_WANDB_RUN_ID_PATH", "").strip()
         run_id = getattr(run, "id", "")

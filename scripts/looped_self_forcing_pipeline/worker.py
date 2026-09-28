@@ -156,29 +156,55 @@ def require_inference_latent_frames(value: Any) -> int:
     return value
 
 
+def require_gpu_model_names(
+    device_names: list[str] | tuple[str, ...],
+    *,
+    expected_model: str,
+    expected_count: int,
+) -> tuple[str, ...]:
+    """Require the allocated CUDA devices to match the runtime GPU model contract."""
+    if not isinstance(expected_model, str) or not expected_model.strip():
+        raise ValueError("runtime GPU model contract is missing")
+    if isinstance(expected_count, bool) or not isinstance(expected_count, int) or expected_count <= 0:
+        raise ValueError("expected CUDA device count must be a positive integer")
+    names = tuple(str(name).strip() for name in device_names)
+    if len(names) != expected_count:
+        raise RuntimeError(
+            f"NM5 allocation exposes {len(names)} CUDA devices; expected exactly {expected_count}"
+        )
+    required = expected_model.casefold()
+    mismatched = [index for index, name in enumerate(names) if required not in name.casefold()]
+    if mismatched:
+        raise RuntimeError(
+            f"NM5 CUDA device model mismatch at visible device index {mismatched[0]}; "
+            f"runtime requires {expected_model}"
+        )
+    return names
+
+
 def _configured_gpu_count(config: Any, stage: str, exp_dir: str | Path) -> int:
     runtime = load_runtime_config(exp_dir)
     policy = runtime.get("policy")
-    resources = policy.get("sandbox_resources") if isinstance(policy, dict) else None
+    resources = runtime.get("sandbox_resources")
     backend_name = str(config.backend.name)
     backend_resources = resources.get(backend_name) if isinstance(resources, dict) else None
     if not isinstance(backend_resources, dict):
-        raise ValueError(f"runtime policy lacks sandbox_resources.{backend_name}")
+        raise ValueError(f"runtime lacks sandbox_resources.{backend_name}")
     stage_key = "train_gpus" if stage == "train" else "infer_gpus"
     configured = backend_resources.get(stage_key)
     if isinstance(configured, bool) or not isinstance(configured, int) or configured <= 0:
-        raise ValueError(f"runtime policy sandbox_resources.{backend_name}.{stage_key} must be positive")
+        raise ValueError(f"runtime sandbox_resources.{backend_name}.{stage_key} must be positive")
     group_value = int(config.backend.train_gpus if stage == "train" else config.backend.infer_gpus)
     if group_value != configured:
         raise ValueError(
-            f"Hydra backend.{stage_key}={group_value} disagrees with runtime policy "
+            f"Hydra backend.{stage_key}={group_value} disagrees with runtime "
             f"sandbox_resources.{backend_name}.{stage_key}={configured}"
         )
     scheduler = backend_resources.get("scheduler")
     group_scheduler = str(getattr(config.backend, "scheduler", ""))
     if scheduler and group_scheduler and str(scheduler) != group_scheduler:
         raise ValueError(
-            f"Hydra backend.scheduler={group_scheduler} disagrees with runtime policy "
+            f"Hydra backend.scheduler={group_scheduler} disagrees with runtime "
             f"sandbox_resources.{backend_name}.scheduler={scheduler}"
         )
     policy_tracking = policy.get("wandb_policy", {})
@@ -599,6 +625,13 @@ def prepare_stage(
     checkpoint_root = _inside(output_roots["ckpt_root"] / run_id, exp_dir, "checkpoint root")
     results_root = _inside(output_roots["final_result_root"] / run_id, exp_dir, "result root")
     method = method_identity(config.method)
+    runtime = load_runtime_config(exp_dir)
+    backend_resources = runtime["sandbox_resources"][str(config.backend.name)]
+    timeout_kill_after_seconds = int(backend_resources.get("timeout_kill_after_seconds", 300))
+    timeout_config = _json_mapping(config.train if stage == "train" else config.infer)
+    timeout_seconds = timeout_config.get("timeout_seconds", 19800)
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or timeout_seconds <= 0:
+        raise ValueError(f"{stage}.timeout_seconds must be a positive integer")
     if stage == "train":
         require_training_seed(_json_mapping(config.train).get("seed"))
     required_gpus = _configured_gpu_count(config, stage, exp_dir)
@@ -693,6 +726,7 @@ def prepare_stage(
         "final_model": checkpoint_root / "model.pt",
         "config_path": config_path,
         "method": method,
+        "timeout_kill_after_seconds": timeout_kill_after_seconds,
         "assets": assets,
         "checkpoint": checkpoint if stage == "infer" else None,
         "manifest": stage_config,
@@ -707,9 +741,9 @@ def check_stage(
     if stage == "infer":
         require_ffprobe()
     prepared = prepare_stage(config, stage, exp_dir=exp_dir)
+    if shutil.which("timeout") is None:
+        raise FileNotFoundError("GNU timeout is required by the pipeline worker")
     if stage == "train":
-        if shutil.which("timeout") is None:
-            raise FileNotFoundError("GNU timeout is required by the training worker")
         entry = SOURCE_ROOT / "train_blockwise_lora_dmd.py"
         command = [
             sys.executable,
@@ -734,7 +768,7 @@ def _command_for(config: Any, stage: str, prepared: dict[str, Any]) -> list[str]
             "timeout",
             "-s",
             "TERM",
-            "--kill-after=300",
+            f"--kill-after={int(prepared.get('timeout_kill_after_seconds', 300))}",
             str(timeout_seconds),
             sys.executable,
             "-m",
@@ -755,7 +789,13 @@ def _command_for(config: Any, stage: str, prepared: dict[str, Any]) -> list[str]
         prepared["exp_dir"], str(config.infer.prompt_file), "infer prompt file"
     )
     output = prepared["results_root"]
+    timeout_seconds = int(config.infer.get("timeout_seconds", 19800))
     return [
+        "timeout",
+        "-s",
+        "TERM",
+        f"--kill-after={int(prepared.get('timeout_kill_after_seconds', 300))}",
+        str(timeout_seconds),
         sys.executable,
         str(source / "inference.py"),
         "--config_path",
@@ -805,6 +845,17 @@ def _require_gpu_capacity(
         raise RuntimeError(
             f"{config.backend.name} {stage} worker requires {requested} visible CUDA GPUs; found {visible}"
         )
+    if str(config.backend.name) == "nm5":
+        runtime = load_runtime_config(exp_dir)
+        resources = runtime["sandbox_resources"]["nm5"]
+        expected_model = str(resources["gpu_type"])
+        expected_count = int(resources["train_gpus"] if stage == "train" else resources["infer_gpus"])
+        names = [torch.cuda.get_device_name(index) for index in range(visible)]
+        require_gpu_model_names(
+            names,
+            expected_model=expected_model,
+            expected_count=expected_count,
+        )
 
 
 def _validate_tracking_environment(config: Any) -> None:
@@ -838,12 +889,20 @@ def _build_worker_environment(config: Any, prepared: dict[str, Any], stage: str)
     backend = str(config.backend.name)
     tracking = _json_mapping(config.tracking)
     train_config = _json_mapping(config.train)
-    environment["PYTHONPATH"] = os.pathsep.join((str(SOURCE_ROOT), str(SCRIPT_ROOT)))
+    python_paths = [
+        path
+        for path in str(environment.get("SUE_PYTHONPATH", "")).split(os.pathsep)
+        if path
+    ]
+    python_paths.extend((str(SOURCE_ROOT), str(SCRIPT_ROOT)))
+    environment["PYTHONPATH"] = os.pathsep.join(python_paths)
     environment["HF_HUB_OFFLINE"] = "1"
     environment["TRANSFORMERS_OFFLINE"] = "1"
     environment["WANDB_MODE"] = str(tracking.get("mode", "offline"))
     environment["SUE_WANDB_MODE"] = str(tracking.get("mode", "offline"))
     environment["SUE_BACKEND"] = backend
+    environment["SUE_RUN_ID"] = str(config.run_id)
+    environment["SUE_STAGE"] = stage
     environment["WANDB_DIR"] = str(prepared["run_root"] / "wandb")
     environment["SUE_WANDB_RUN_ID_PATH"] = str(prepared["run_root"] / "wandb_run_id.txt")
     environment["WANDB_PROJECT"] = _tracking_project(config)
@@ -967,7 +1026,7 @@ def execute_worker(
     run_root = output_roots["artifacts_root"] / run_id
     checkpoint_root = output_roots["ckpt_root"] / run_id
     results_root = output_roots["final_result_root"] / run_id
-    ledger_path = output_roots["artifacts_root"] / "experiment_results.csv"
+    ledger_path = output_roots["ledger_csv"]
     try:
         seed = int(config.train.seed if stage == "train" else config.infer.seed)
     except (AttributeError, TypeError, ValueError):

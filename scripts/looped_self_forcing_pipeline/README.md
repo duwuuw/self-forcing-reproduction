@@ -6,10 +6,11 @@ The default bundle is `scale_up_outputs/looped_self_forcing_pipeline`; set
 `<SUE_EXP_DIR>/config/`.
 
 The `source/` tree is the code-only runtime copied from the previous NM5
-pipeline. Its Python modules and default YAML are preserved byte-for-byte,
-including the temporal-loop and model code. `COPY_MANIFEST.json` records the
-source hashes. Model weights, datasets, generated videos, run outputs, and
-Python caches are not part of this source migration.
+pipeline. Model and temporal-loop math remain unchanged. The training memory
+probe adds rank labels to its diagnostic lines so smoke evidence can be checked
+per GPU. `COPY_MANIFEST.json` records the source hashes. Model weights, datasets,
+generated videos, run outputs, and Python caches are not part of this source
+migration.
 
 The copied upstream source is licensed under Apache License 2.0. Its original
 `LICENSE` is preserved at `source/LICENSE`; the source checkout had no
@@ -17,13 +18,21 @@ The copied upstream source is licensed under Apache License 2.0. Its original
 
 ## Runtime inputs
 
-Set `SUE_ASSET_ROOT` through the ignored, private backend environment. It must
-name an existing absolute directory containing `checkpoints/` and
-`wan_models/`; the pipeline resolves its configured model and checkpoint names
-relative to that root. Keep the root value and host-specific asset locations
-out of tracked config and command-line overrides. Both launchers forward the
-environment variable to preflight and the worker without placing its value in
-Slurm or tmux arguments.
+For NM5, `config/runtime.yaml:environment.asset_root` selects the
+workspace-relative `Self-Forcing-blockwise-layerwise` checkout under the
+private `NM5_WORKSPACE_ROOT`. The resolved root must contain `checkpoints/` and
+`wan_models/`; preflight checks the configured checkpoint and both model trees.
+`SUE_ASSET_ROOT` and `SUE_PYTHON` are optional private overrides. By default,
+the NM5 launcher resolves the interpreter and asset root from `runtime.yaml`.
+It adds `environment.python_overlay` to the Python import path when configured.
+Do not put resolved backend paths in tracked files or CLI overrides.
+
+The NM5 runtime maps cache paths from ignored `NM5_HF_HOME`,
+`NM5_HF_HUB_CACHE`, `NM5_MODELSCOPE_CACHE`, `NM5_TORCH_HOME`,
+`NM5_MPLCONFIGDIR`, and `NM5_WANDB_CACHE_DIR` values. Launch preflight requires
+all six writable directories and rejects cache paths under `HOME`; their
+resolved values stay private and are exported to the Slurm worker. Partition,
+QoS, GPU, node, and CPU requests come from top-level `sandbox_resources.nm5`.
 
 The bundle's `config/runtime.yaml:paths.datasets_root` is a bundle-relative
 directory. `train.prompt_file` and `infer.prompt_file` select relative files
@@ -68,7 +77,7 @@ Hydra `key=value` overrides. Accepted keys are `method`, `tracking`, `scale`,
 `seed`, `train.max_steps`, `train.log_iters`, `train.timeout_seconds`,
 `train.checkpoint_interval_seconds`, `train.resume_checkpoint`,
 `infer.checkpoint`, `infer.num_samples`, `infer.num_output_frames`,
-`infer.seed`, and `infer.use_ema`. Checkpoint overrides must be relative to
+`infer.timeout_seconds`, `infer.seed`, and `infer.use_ema`. Checkpoint overrides must be relative to
 `SUE_EXP_DIR`. Backend, stage, run ID, assets, unknown keys, absolute paths,
 and malformed values are rejected.
 
@@ -84,23 +93,110 @@ records the gathered LoRA adapter size as `trainable_parameter_count`.
 
 ## NM5 Slurm launch
 
-Load the private NM5 environment in the normal operator shell, set
-`SUE_PYTHON` to the prepared interpreter, and choose a fresh `run_id`:
+Load the ignored private NM5 environment and choose a fresh run_id:
 
-```bash
-SUE_PYTHON=/path/to/nm5/python \
-  bash scale_up_outputs/looped_self_forcing_pipeline/slurm_scripts/nm5_submit.sh \
-    train loop-train-001 scale=smoke train.max_steps=20 train.log_iters=5
-```
+~~~bash
+bash scale_up_outputs/looped_self_forcing_pipeline/slurm_scripts/nm5_submit.sh \
+  train loop-train-001 scale=smoke train.max_steps=20 train.log_iters=5
+~~~
 
-The launcher requires `NM5_DEEPRESEARCH_ROOT`, `NM5_ACCOUNT`, `NM5_PARTITION`,
-`NM5_QOS`, and `SUE_ASSET_ROOT`. It runs the stage preflight before submission,
-requests four GPUs for training or one GPU for inference, and writes Slurm
-stdout and stderr under the bundle-relative `paths.logs_root`. The Slurm job
-name uses the username from workspace `user.yaml`; invalid or missing values
-use the required `silly-` prefix. Its remaining name matches the W&B experiment
-name after resolving the selected method, run ID, and stage. The batch job receives only the runtime
-environment variables it needs, not the entire submitting shell environment.
+The launcher reads NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT,
+and cache values from the ignored backend environment. It resolves SUE_PYTHON
+and SUE_ASSET_ROOT from runtime unless the operator supplies private overrides.
+Partition and QoS come from sandbox_resources.nm5. Before submission, scontrol
+must confirm that the selected Hydra train.timeout_seconds or
+infer.timeout_seconds fits the partition MaxTime. The launcher requests four
+GPUs for training or one GPU for inference, and writes Slurm stdout/stderr under
+paths.logs_root. The allocated NM5 worker checks every visible CUDA device
+against runtime gpu_type=H100 before entering the pipeline; the controller does
+not claim hardware proof from partition metadata. Slurm --time adds runtime
+timeout_kill_after_seconds and finalization_grace_seconds after Hydra's timeout,
+leaving time to record ledger and W&B status without changing model duration.
+The Slurm job name uses the username from workspace user.yaml;
+invalid or missing values use the silly- prefix. Its remaining name matches the
+W&B experiment name after resolving method, run ID, and stage. Only selected
+runtime variables are exported to the batch job.
+
+## Paired layerwise 23–30 comparison
+
+The two versioned method groups use 0-based layer indices 22..29 (paper
+layers 23–30) and identical LoRA/loss settings. layerwise_l23_30_k3_lr5gen
+uses fixed K=3, lr=4e-7 (one fifth of the original generator LR), and keeps
+lr_critic=4e-7. layerwise_l23_30_k2_lr5both uses fixed K=2 and scales both
+learning rates to lr=4e-7, lr_critic=8e-8.
+
+Before each pair stage, run the SUE capacity query and place its fresh result at
+SUE_EXP_DIR/<pair_id>/max_parallel.json using the standard sue-job-max-parallel
+schema. It must match the runtime NM5 partition, allow max_parallel >= 1, and be
+no more than 10 minutes old. The workspace preflight adapter separately queries
+association/QoS submit limits and active pending/running jobs; it fails closed
+unless two pending-submit slots remain for the dependency pair. It records only
+redacted summaries under artifacts/pairs/<pair_id>/pending_submit_preflight.json
+and artifacts/pairs/<pair_id>/preflight.json. Raw queue output, account names,
+hosts, and absolute paths do not belong in these reports.
+
+Choose a fresh smoke pair ID and use it for both jobs:
+
+~~~bash
+SMOKE_PAIR_ID="<fresh-smoke-pair-id>" # replace with a unique lowercase ID
+bash scale_up_outputs/looped_self_forcing_pipeline/slurm_scripts/nm5_submit_pair_23_30.sh \
+  "$SMOKE_PAIR_ID" scale=smoke
+~~~
+
+The launcher runs both stage preflights and the parent preflight dispatcher
+before the first sbatch. The workspace adapter writes its redacted report under
+artifacts/pairs/<pair_id>/preflight.json. It enables SUE_MEM_PROBE=1 at step 3
+only for smoke. A pair ID is single-use after any preflight attempt; if
+preflight or submission fails, start again with a fresh pair ID and capacity
+artifact.
+Each job requests four GPUs; the second uses an afterany dependency on the first,
+so they cannot overlap. After both jobs finish, validate their scheduler state,
+final checkpoint, W&B identity and artifacts, ledger rows, and four step-3
+memory peaks with no probe warning or OOM evidence. Then record the immutable
+readiness stamp:
+
+~~~bash
+bash scale_up_outputs/looped_self_forcing_pipeline/slurm_scripts/nm5_submit_pair_23_30.sh \
+  --verify-smoke "$SMOKE_PAIR_ID"
+~~~
+
+The stamp is stored under paths.readiness_root and records bundle-relative
+references and hashes for checkpoints, manifests, ledger rows, W&B identities,
+Slurm logs, the submission receipt, and the fresh smoke capacity artifact. It
+also records the allocated worker's H100 check and step-3 reserved-memory
+headroom per CUDA rank. The runtime records 63.29 GiB usable H100 memory and a
+7 GiB non-PyTorch reserve, so every rank's step-3 PyTorch reserved peak must be
+at most 56.29 GiB before the full pair is allowed. A peak above that threshold
+blocks full scale even if no OOM was reported.
+
+This paired smoke is training-only; it does not exercise inference. Validate
+inference separately from a completed full EMA checkpoint using the inference
+stage and its decoded-frame checks.
+
+For full scale, use a new pair ID, refresh its capacity artifact, and set
+train.timeout_seconds from observed smoke throughput with a conservative
+margin. The launcher requires the readiness stamp, rechecks smoke evidence and
+hashes, compares each full manifest with its smoke manifest, disables the
+memory probe, and uses the requested timeout for the worker's internal timer.
+Slurm `--time` adds the configured kill-after and finalization grace:
+
+Only the scale group, max_steps, log_iters, timeout_seconds, run ID, and
+resolved config digest may differ. Loss weights, LoRA, model/checkpoint hashes,
+prompt hashes, tracking project/mode, and seed must match the smoke manifest.
+
+~~~bash
+FULL_PAIR_ID="<fresh-full-pair-id>" # replace with a different unique lowercase ID
+bash scale_up_outputs/looped_self_forcing_pipeline/slurm_scripts/nm5_submit_pair_23_30.sh \
+  "$FULL_PAIR_ID" scale=full --after-smoke "$SMOKE_PAIR_ID" \
+  train.timeout_seconds=<smoke-derived-seconds>
+~~~
+
+Full scale uses the versioned 600-step cap; train.max_steps cannot be
+overridden. A smoke-derived timeout is required and must fit the runtime
+partition MaxTime.
+
+The fixed K/LR comparison is the recorded autotune waiver in
+config/runtime.yaml:autotune_hyperparam; no hyperparameter sweep is implied.
 
 ## AutoDL direct tmux launch
 

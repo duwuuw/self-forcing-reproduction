@@ -64,4 +64,5 @@ Loop** into Self-Forcing's causal autoregressive rollout. That port is what we c
 - The config entry point is `scripts/looped_self_forcing_pipeline/`; its bundle is selected by `SUE_EXP_DIR` and defaults to `scale_up_outputs/looped_self_forcing_pipeline/`.
 - Keep its Hydra groups and runtime contract under that bundle's `config/` directory. Do not redirect or overwrite the older active experiment at `scale_up_outputs/runtime.yaml`.
 - Keep its backend launchers in `scale_up_outputs/looped_self_forcing_pipeline/slurm_scripts/`; use the NM5 submitter for Slurm and the AutoDL runner for direct tmux launches.
-- Resolve model and checkpoint assets under `SUE_ASSET_ROOT`, set from ignored private backend configuration. Keep all concrete asset roots and host paths out of tracked files.
+- Legacy entry points under `Self-Forcing/` continue to use that checkout's own asset layout.
+- The newer backend-neutral pipeline resolves NM5 assets from `scale_up_outputs/looped_self_forcing_pipeline/config/runtime.yaml:environment.asset_root`, relative to `NM5_WORKSPACE_ROOT`; its current default is `Self-Forcing-blockwise-layerwise/`. `SUE_ASSET_ROOT` is an optional private override. Keep absolute backend roots and host paths out of tracked files.

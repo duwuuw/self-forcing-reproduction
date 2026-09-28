@@ -22,11 +22,14 @@ assets:
 train:
   max_steps: ${scale.train.max_steps}
   log_iters: ${scale.train.log_iters}
+  timeout_seconds: 19800
+  checkpoint_interval_seconds: 3600
   seed: ${seed}
   resume_checkpoint: null
   prompt_file: ${data.train_prompt_file}
 
 infer:
+  timeout_seconds: 19800
   checkpoint: null
   prompt_file: ${data.infer_prompt_file}
   num_output_frames: 123
