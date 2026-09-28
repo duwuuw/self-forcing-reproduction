@@ -45,7 +45,7 @@ def test_hydra_composes_method_backend_stage_tracking_and_scale_groups():
     assert config.scale.name == "smoke"
     assert config.train.max_steps == 10
     assert config.train.log_iters == 10
-    assert config.train.timeout_seconds == 19800
+    assert config.train.timeout_seconds == 1800
     assert config.infer.timeout_seconds == 19800
     assert config.seed == 1
     assert config.train.seed == 1

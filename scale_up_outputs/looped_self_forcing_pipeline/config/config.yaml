@@ -22,7 +22,7 @@ assets:
 train:
   max_steps: ${scale.train.max_steps}
   log_iters: ${scale.train.log_iters}
-  timeout_seconds: 19800
+  timeout_seconds: ${scale.train.timeout_seconds}
   checkpoint_interval_seconds: 3600
   seed: ${seed}
   resume_checkpoint: null

@@ -2,5 +2,6 @@ name: smoke
 train:
   max_steps: 10
   log_iters: 10
+  timeout_seconds: 1800
 infer:
   num_samples: 1

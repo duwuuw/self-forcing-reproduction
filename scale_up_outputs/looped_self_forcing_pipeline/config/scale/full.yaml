@@ -2,5 +2,6 @@ name: full
 train:
   max_steps: 600
   log_iters: 50
+  timeout_seconds: 19800
 infer:
   num_samples: 1

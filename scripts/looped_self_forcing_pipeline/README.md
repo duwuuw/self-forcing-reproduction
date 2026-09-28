@@ -153,7 +153,9 @@ before the first sbatch. The workspace adapter writes its redacted report under
 artifacts/pairs/<pair_id>/preflight.json. It enables SUE_MEM_PROBE=1 at step 3
 only for smoke. A pair ID is single-use after any preflight attempt; if
 preflight or submission fails, start again with a fresh pair ID and capacity
-artifact.
+artifact. The versioned smoke scale uses a 1,800-second worker timeout; Slurm
+adds the 300-second kill-after and 600-second finalization grace, for a
+2,700-second (45-minute) walltime request per job.
 Each job requests four GPUs; the second uses an afterany dependency on the first,
 so they cannot overlap. After both jobs finish, validate their scheduler state,
 final checkpoint, W&B identity and artifacts, ledger rows, and four step-3
