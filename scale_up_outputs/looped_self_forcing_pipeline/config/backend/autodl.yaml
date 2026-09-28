@@ -1,0 +1,5 @@
+name: autodl
+scheduler: tmux
+train_gpus: 4
+infer_gpus: 1
+cpus_per_gpu: null

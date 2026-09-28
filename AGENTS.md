@@ -2,14 +2,16 @@
 
 ## Workspace guide
 
-Read `agent.md` for stable code boundaries and the parent SUE memory before making
+Read `agent.md` for stable code boundaries, this workspace's `SCALE_UP.md` for
+workspace-specific experiment lessons, and the parent SUE memory before making
 changes. The evaluation contract uses a fixed `num_output_frames` of `123`, derives
 internal raw/eval counts `489/480`, and keeps only a final 30-second video at 16 fps.
 Do not use this file or `agent.md` as a run ledger.
 
-Parent context: this workspace is under `deepresearch/workspace/`. On start, load the
-parent repo memory and skills before acting — `memory/project.md`, root `AGENTS.md`,
-`memory/sue/SCALE_UP.md`, `.codex/skills/AGENTS.md`, and the active backend's private
+Parent context: this workspace is under `deepresearch/workspace/`. On start, read this
+workspace's `SCALE_UP.md` alongside the parent repo memory and skills before acting —
+parent `memory/project.md`, root `AGENTS.md`, `memory/sue/SCALE_UP.md`,
+`.codex/skills/AGENTS.md`, and the active backend's private
 `deepresearch-sandbox/config_<sandbox>.txt`.
 
 ## What this workspace is
@@ -31,9 +33,10 @@ Loop** into Self-Forcing's causal autoregressive rollout. That port is what we c
 ## Rules
 
 - Do not edit `Self-Forcing/VBench/` (vendored eval upstream) or `preliminary_*` material.
-- Keep SUE-owned launchers in
-  `scale_up_outputs/nm5_looped_self_forcing_search_20260912/slurm_scripts/`; they are durable run-bundle
-  source, not disposable output.
+- The older VBench search experiment keeps its launchers in
+  `scale_up_outputs/nm5_looped_self_forcing_search_20260912/slurm_scripts/`.
+  That NM5-only run bundle is separate from the backend-neutral looped
+  Self-Forcing pipeline below.
 - `Self-Forcing/checkpoints/` and `Self-Forcing/wan_models/` are git-ignored weight
   locations; verify their active workspace-local reachability from the current bundle
   and private NM5 configuration before smoke or launch.
@@ -55,3 +58,10 @@ Loop** into Self-Forcing's causal autoregressive rollout. That port is what we c
 | checkpoint | `checkpoints/self_forcing_dmd.pt`, `--use_ema` |
 | generation | 128 selected prompts, fixed `num_output_frames=123` → derived 489 raw → 480 eval frames @ 16 fps (30 s final) |
 | eval | VBench-Long, 6 dims, `--mode long_custom_input --dev_flag` |
+
+## Backend-neutral looped Self-Forcing pipeline
+
+- The config entry point is `scripts/looped_self_forcing_pipeline/`; its bundle is selected by `SUE_EXP_DIR` and defaults to `scale_up_outputs/looped_self_forcing_pipeline/`.
+- Keep its Hydra groups and runtime contract under that bundle's `config/` directory. Do not redirect or overwrite the older active experiment at `scale_up_outputs/runtime.yaml`.
+- Keep its backend launchers in `scale_up_outputs/looped_self_forcing_pipeline/slurm_scripts/`; use the NM5 submitter for Slurm and the AutoDL runner for direct tmux launches.
+- Resolve model and checkpoint assets under `SUE_ASSET_ROOT`, set from ignored private backend configuration. Keep all concrete asset roots and host paths out of tracked files.

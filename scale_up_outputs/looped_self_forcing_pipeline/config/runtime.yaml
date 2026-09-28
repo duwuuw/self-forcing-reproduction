@@ -1,0 +1,35 @@
+workspace: looped-flow-matching
+experiment_family: looped_self_forcing_pipeline
+workflow_type: training
+
+backend:
+  primary: nm5
+
+paths:
+  # Operational roots below are bundle-relative; scale_up_outputs_root and exp_dir
+  # identify the bootstrap bundle and are not nested output path components.
+  scale_up_outputs_root: scale_up_outputs
+  exp_dir: looped_self_forcing_pipeline
+  config_root: config
+  slurm_scripts_root: slurm_scripts
+  logs_root: logs
+  datasets_root: datasets
+  ckpt_root: ckpt
+  artifacts_root: artifacts
+  final_result_root: final_result
+
+policy:
+  sandbox_resources:
+    nm5:
+      scheduler: slurm
+      train_gpus: 4
+      infer_gpus: 1
+      cpus_per_gpu: 20
+    autodl:
+      scheduler: tmux
+      train_gpus: 4
+      infer_gpus: 1
+
+  wandb_policy:
+    mode: offline
+    required: true

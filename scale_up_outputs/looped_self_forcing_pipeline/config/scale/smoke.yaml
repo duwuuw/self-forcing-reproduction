@@ -1,0 +1,6 @@
+name: smoke
+train:
+  max_steps: 10
+  log_iters: 10
+infer:
+  num_samples: 1

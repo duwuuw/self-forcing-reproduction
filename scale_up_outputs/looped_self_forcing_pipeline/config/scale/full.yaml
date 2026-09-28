@@ -1,0 +1,6 @@
+name: full
+train:
+  max_steps: 600
+  log_iters: 50
+infer:
+  num_samples: 1

@@ -1,0 +1,125 @@
+profile_id: blockwise_l16_23_k2
+# DELIBERATE DEVIATION from the upstream preset (approved 2026-09-19).
+# Upstream starts from checkpoints/ode_init.pt ("ODE init -> DMD"). This run
+# instead continues from the RELEASED Self-Forcing DMD checkpoint so the LoRA
+# adapters are trained on exactly the weights that produced the R1-R4 VBench
+# numbers (those evals used use_ema=true).
+#
+# The released file stores its weights under the key "generator_ema", but
+# load_generator_base_checkpoint (scripts/looped_self_forcing_pipeline/source/model/base.py:80-96) only unwraps
+# "generator"/"model" and then calls load_state_dict(..., strict=True), so it
+# rejects that file. Rather than patch the branch, the EMA weights were
+# rewrapped off-tree into the expected {"generator": ...} layout:
+#   self_forcing_dmd.pt        {"generator_ema": {825 tensors}}  sha256 a0413986...f56a3
+#   self_forcing_dmd_ema_as_generator.pt  {"generator": {825 tensors}}  (bitwise identical inner tensors)
+# Recreate with: torch.save({"generator": torch.load(src, mmap=True)["generator_ema"]}, dst)
+generator_ckpt: checkpoints/self_forcing_dmd_ema_as_generator.pt
+teacher_checkpoint: wan_models/Wan2.1-T2V-14B
+generator_fsdp_wrap_strategy: size
+real_score_fsdp_wrap_strategy: size
+fake_score_fsdp_wrap_strategy: size
+real_name: Wan2.1-T2V-14B
+fake_name: Wan2.1-T2V-1.3B
+text_encoder_fsdp_wrap_strategy: size
+denoising_step_list:
+- 1000
+- 750
+- 500
+- 250
+warp_denoising_step: true
+ts_schedule: false
+num_train_timestep: 1000
+timestep_shift: 5.0
+guidance_scale: 3.0
+denoising_loss_type: flow
+mixed_precision: true
+seed: 1
+wandb_host: WANDB_HOST
+wandb_key: WANDB_KEY
+wandb_entity: WANDB_ENTITY
+wandb_project: WANDB_PROJECT
+sharding_strategy: hybrid_full
+lr: 2.0e-6
+lr_critic: 4.0e-7
+beta1: 0.0
+beta2: 0.999
+beta1_critic: 0.0
+beta2_critic: 0.999
+data_path: prompts/vidprom_filtered_extended.txt
+batch_size: 1
+# One sample per NM5 H100 rank; run without gradient accumulation.
+# Keep the per-rank batch at one because the 21-frame DMD rollout is memory-heavy.
+gradient_accumulation_steps: 1
+ema_weight: 0.99
+ema_start_step: 200
+total_batch_size: 4
+log_iters: 50
+negative_prompt: '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
+dfake_gen_update_ratio: 5
+# 2026-09-20: RESTORED TO THE UPSTREAM 21 LATENT FRAMES.
+#
+# The 15- and 12-frame reductions were reverted because they were a workaround
+# chosen without evidence. Four runs OOMed and every explanation offered was
+# inferred from reading code; two of those inferences were later refuted. The
+# decision now is to MEASURE instead: scripts/looped_self_forcing_pipeline/source/train_blockwise_lora_dmd.py carries
+# a memory probe (SUE_MEM_PROBE=1) that logs allocated/reserved/frag/peak every
+# step and, on one designated step, traces the rollout, the teacher KL term and
+# the DMD loss separately.
+#
+# Known and measured so far:
+#   * NM5's H100 has 63.29 GiB usable, versus the 80 GB card the upstream
+#     reference was tuned for.
+#   * With 4-way FSDP the frozen 14B teacher's fp32 shard is ~14 GiB/rank
+#     (against ~0.9 GiB on the 64-GPU reference). Teacher CPU offload removed
+#     that residency, but its per-block all-gather (~916 MiB) is what actually
+#     OOMed -- and that transient does not shrink with more GPUs.
+#   * The K=2 temporal loop does NOT enlarge the autograd graph: stop_grad_early
+#     runs the early repeat under torch.no_grad() and detaches its output
+#     (scripts/looped_self_forcing_pipeline/source/utils/temporal_loop.py:233-245).
+# Do not shorten the rollout again until the probe says which term dominates.
+image_or_video_shape:
+- 1
+- 21
+- 16
+- 60
+- 104
+distribution_loss: dmd
+trainer: score_distillation
+gradient_checkpointing: true
+num_frame_per_block: 3
+min_training_frames: 21
+# Official Self-Forcing baseline is 21 latent frames (81 pixel frames, ~5 s at
+# 16 FPS). Keep min=max so the rollout length is fixed.
+# training_gradient_window_frames tracks num_training_frames here: the branch
+# validates window <= num_training_frames (scripts/looped_self_forcing_pipeline/source/pipeline/self_forcing_training.py:93,
+# "training_gradient_window_frames cannot exceed num_training_frames"). Setting
+# window == frames preserves the upstream relationship exactly -- upstream had
+# 21 == 21, so start_gradient_frame_index = frames - window = 0 and every AR
+# chunk is gradient-enabled. Only the absolute length changes, not which frames
+# receive gradients.
+num_training_frames: 21
+training_gradient_window_frames: 21
+load_raw_video: false
+i2v: false
+model_kwargs:
+  model_name: Wan2.1-T2V-1.3B
+  timestep_shift: 5.0
+temporal_loop:
+  enabled: true
+  mode: block
+  layer_start: 16
+  layer_end: 23
+  k_min: 2
+  k_max: 2
+  strength: 1.0
+  stop_grad_early: true
+  schedule: temporal_uniform
+  training_enabled: true
+lora:
+  enabled: true
+  rank: 8
+  alpha: 16
+  dropout: 0.0
+  target_modules:
+  - self_attn.q
+  - self_attn.v

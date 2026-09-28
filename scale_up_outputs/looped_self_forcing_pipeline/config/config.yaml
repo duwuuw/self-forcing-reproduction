@@ -1,0 +1,35 @@
+defaults:
+  - method: layerwise_l16_23_k2
+  - backend: nm5
+  - stage: train
+  - tracking: offline
+  - scale: full
+  - _self_
+
+run_id: null
+seed: 1
+
+data:
+  train_prompt_file: vidprom_filtered_extended.txt
+  infer_prompt_file: inference_prompts.txt
+
+assets:
+  root: ${oc.env:SUE_ASSET_ROOT,null}
+  generator_checkpoint: checkpoints/self_forcing_dmd_ema_as_generator.pt
+  teacher_model_dir: wan_models/Wan2.1-T2V-14B
+  student_model_dir: wan_models/Wan2.1-T2V-1.3B
+
+train:
+  max_steps: ${scale.train.max_steps}
+  log_iters: ${scale.train.log_iters}
+  seed: ${seed}
+  resume_checkpoint: null
+  prompt_file: ${data.train_prompt_file}
+
+infer:
+  checkpoint: null
+  prompt_file: ${data.infer_prompt_file}
+  num_output_frames: 123
+  num_samples: ${scale.infer.num_samples}
+  seed: ${seed}
+  use_ema: true

@@ -1,0 +1,5 @@
+mode: offline
+required: true
+project: looped-self-forcing-lora-dmd
+api_key_env: WANDB_API_KEY
+entity_env: WANDB_ENTITY

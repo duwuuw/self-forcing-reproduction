@@ -1,0 +1,360 @@
+{
+  "description": "Code-only baseline migration from the prior NM5 pipeline. Source files are copied byte-for-byte; runtime assets, generated outputs, datasets, and caches are excluded.",
+  "files": [
+    {
+      "copy": "source/demo_utils/constant.py",
+      "origin": "Self-Forcing-blockwise-layerwise/demo_utils/constant.py",
+      "sha256": "d1c53d7d5209bd5065bf566948333849a3bf9c71d151a0d7325acf67f46cb3d9"
+    },
+    {
+      "copy": "source/demo_utils/memory.py",
+      "origin": "Self-Forcing-blockwise-layerwise/demo_utils/memory.py",
+      "sha256": "ca0b31c93019f802e1312d512591ae6bea35b450064cdde19b6202779f50bb7f"
+    },
+    {
+      "copy": "source/demo_utils/taehv.py",
+      "origin": "Self-Forcing-blockwise-layerwise/demo_utils/taehv.py",
+      "sha256": "865b1dd0516682c02352bd76bce2ad0472588330ea9fab30ca0895630f263244"
+    },
+    {
+      "copy": "source/demo_utils/utils.py",
+      "origin": "Self-Forcing-blockwise-layerwise/demo_utils/utils.py",
+      "sha256": "f539911c5317323e24cdbcb331dc66645f6e7a1e6c68aa8ed4bb24effefa9843"
+    },
+    {
+      "copy": "source/demo_utils/vae.py",
+      "origin": "Self-Forcing-blockwise-layerwise/demo_utils/vae.py",
+      "sha256": "0b938e1e356a221b8c9ac1c64e554bfd01016b609752ab760805829303deb034"
+    },
+    {
+      "copy": "source/demo_utils/vae_block3.py",
+      "origin": "Self-Forcing-blockwise-layerwise/demo_utils/vae_block3.py",
+      "sha256": "2a9a50fd1731992a32232a79bf0457d50c12d12db1ea9c14d9adb4201816e0f4"
+    },
+    {
+      "copy": "source/demo_utils/vae_torch2trt.py",
+      "origin": "Self-Forcing-blockwise-layerwise/demo_utils/vae_torch2trt.py",
+      "sha256": "8a267d73ac8a506a402c340726c6dbcdeca3328a909ce61922114bbe3fcb7068"
+    },
+    {
+      "copy": "source/inference.py",
+      "origin": "Self-Forcing-blockwise-layerwise/inference.py",
+      "sha256": "9455d62b76439c190a73690fc7df12766f384aa81be48c8b495610415672c45b"
+    },
+    {
+      "copy": "source/model/__init__.py",
+      "origin": "Self-Forcing-blockwise-layerwise/model/__init__.py",
+      "sha256": "2c22d7df9de307a7b3d8e6ef69c0cf2cf5c47590d0cd2386d33f87b494c5a378"
+    },
+    {
+      "copy": "source/model/base.py",
+      "origin": "Self-Forcing-blockwise-layerwise/model/base.py",
+      "sha256": "971a066430adccee14c78611e36ad77df5c549fcf668c5ac42b350a2ec04af1d"
+    },
+    {
+      "copy": "source/model/causvid.py",
+      "origin": "Self-Forcing-blockwise-layerwise/model/causvid.py",
+      "sha256": "870beb90c2af5233a19c733c4cbd72f79b9ef03fae5a2915e37b94f4355c0000"
+    },
+    {
+      "copy": "source/model/diffusion.py",
+      "origin": "Self-Forcing-blockwise-layerwise/model/diffusion.py",
+      "sha256": "e4bbae3554722cac0e2ce6709f287c088d95cd96da2c3a89683188b6df232528"
+    },
+    {
+      "copy": "source/model/dmd.py",
+      "origin": "Self-Forcing-blockwise-layerwise/model/dmd.py",
+      "sha256": "e901c9c89f089817eb6a453a5e557fe995d469948a66ae83109c30722aa8a975"
+    },
+    {
+      "copy": "source/model/gan.py",
+      "origin": "Self-Forcing-blockwise-layerwise/model/gan.py",
+      "sha256": "da30e3ff2d770646643b4994fa1607581851a39ee28b9ab70460a71ca4125b1a"
+    },
+    {
+      "copy": "source/model/lora.py",
+      "origin": "Self-Forcing-blockwise-layerwise/model/lora.py",
+      "sha256": "f6cf344c9bec5611ddad409fd80d5c1344fdc0365b1d6e55a5c5ca3a15bb7278"
+    },
+    {
+      "copy": "source/model/ode_regression.py",
+      "origin": "Self-Forcing-blockwise-layerwise/model/ode_regression.py",
+      "sha256": "3a581d436a1ebc8c7bc9191fef203784008cec313827ea0afe6ed961810dac20"
+    },
+    {
+      "copy": "source/model/sid.py",
+      "origin": "Self-Forcing-blockwise-layerwise/model/sid.py",
+      "sha256": "4b6536ec27b1f3a555169b8c887190f06aaa9f929c2d7f9fcd8c289d819973ba"
+    },
+    {
+      "copy": "source/pipeline/__init__.py",
+      "origin": "Self-Forcing-blockwise-layerwise/pipeline/__init__.py",
+      "sha256": "deb77d9f0f8175067cb9feb939c60b29bd68bc9130fd2b1b0019148c29b9fa6a"
+    },
+    {
+      "copy": "source/pipeline/bidirectional_diffusion_inference.py",
+      "origin": "Self-Forcing-blockwise-layerwise/pipeline/bidirectional_diffusion_inference.py",
+      "sha256": "8a5f9daee9e0274aeb4ac3a69ddf7a0f84ca1aa19d4e3df30eab6b8cec712248"
+    },
+    {
+      "copy": "source/pipeline/bidirectional_inference.py",
+      "origin": "Self-Forcing-blockwise-layerwise/pipeline/bidirectional_inference.py",
+      "sha256": "675a723275359d579749250b5651180e46249c5269c783e7e49c4fab14c5d90d"
+    },
+    {
+      "copy": "source/pipeline/causal_diffusion_inference.py",
+      "origin": "Self-Forcing-blockwise-layerwise/pipeline/causal_diffusion_inference.py",
+      "sha256": "171ca0f3d673325bee97b92d257ca723f10a0aed8361c682d874a8fa5e620c2e"
+    },
+    {
+      "copy": "source/pipeline/causal_inference.py",
+      "origin": "Self-Forcing-blockwise-layerwise/pipeline/causal_inference.py",
+      "sha256": "278f56adc296a206038cfc0437ddb60e7d516d2b0a6f721f5ec4eb9188ebe1d1"
+    },
+    {
+      "copy": "source/pipeline/self_forcing_training.py",
+      "origin": "Self-Forcing-blockwise-layerwise/pipeline/self_forcing_training.py",
+      "sha256": "01646e9b3fc4a0eee89ceb8b484a0163da9c58db58b8b751d9d77528c9e14e45"
+    },
+    {
+      "copy": "source/self_forcing_runtime_alignment.py",
+      "origin": "scripts/self_forcing_runtime_alignment.py",
+      "sha256": "c3dad189eb4619df8116ecf843b0bb58f1644eed17b842496c8673dca6a01b26"
+    },
+    {
+      "copy": "source/train.py",
+      "origin": "Self-Forcing-blockwise-layerwise/train.py",
+      "sha256": "7c9a991a2490e84ccd3469f7d3138e3a58d1f8d681066a4e37a9a24af3b6e5ed"
+    },
+    {
+      "copy": "source/train_blockwise_lora_dmd.py",
+      "origin": "scripts/train_blockwise_lora_dmd.py",
+      "sha256": "b07d6bcd164a1391e8af3c8e9f283784761af0a6cb72eb8ed114e68184e650d9"
+    },
+    {
+      "copy": "source/trainer/__init__.py",
+      "origin": "Self-Forcing-blockwise-layerwise/trainer/__init__.py",
+      "sha256": "c7ca5d93f80e88897c6cc0f5002551a5337d047de49bd52048cb886e22b95d3c"
+    },
+    {
+      "copy": "source/trainer/diffusion.py",
+      "origin": "Self-Forcing-blockwise-layerwise/trainer/diffusion.py",
+      "sha256": "525cb9e839a6f801c78ae8527d3eca8631427a0e7992d246101e4e4cfc1214e6"
+    },
+    {
+      "copy": "source/trainer/distillation.py",
+      "origin": "Self-Forcing-blockwise-layerwise/trainer/distillation.py",
+      "sha256": "a8ea77aa95a1f6d93bbaa4dafaecfede11bc1a94bcf0a4fe6533e552fe0baae6"
+    },
+    {
+      "copy": "source/trainer/gan.py",
+      "origin": "Self-Forcing-blockwise-layerwise/trainer/gan.py",
+      "sha256": "c420592ef0c648e9bef770ddca2a0b1b35ce687ef5d3d0ba516304d90d1e9a32"
+    },
+    {
+      "copy": "source/trainer/gradient_accumulation.py",
+      "origin": "Self-Forcing-blockwise-layerwise/trainer/gradient_accumulation.py",
+      "sha256": "cda8c8a2324c6b94f7186aebc4631d1ef517f2fb0a4340313233107e6d975c2f"
+    },
+    {
+      "copy": "source/trainer/ode.py",
+      "origin": "Self-Forcing-blockwise-layerwise/trainer/ode.py",
+      "sha256": "a311ccae5b974912fe9406df2626fec5df1efa02f1ed7c24c0a038c711de407a"
+    },
+    {
+      "copy": "source/utils/dataset.py",
+      "origin": "Self-Forcing-blockwise-layerwise/utils/dataset.py",
+      "sha256": "2ced021a06123db94204bd2c7a915cf39b19d7220c62a4fad6c5e14725ff640d"
+    },
+    {
+      "copy": "source/utils/distributed.py",
+      "origin": "Self-Forcing-blockwise-layerwise/utils/distributed.py",
+      "sha256": "3f1d1e152e1170d7b39f3cacbe981f56f1e0c9b420cac5767111d02f0bd23f8f"
+    },
+    {
+      "copy": "source/utils/lmdb.py",
+      "origin": "Self-Forcing-blockwise-layerwise/utils/lmdb.py",
+      "sha256": "d8bfb912cd75a947a8214955b1022662c99d4b23ff882d6e68bb717faafe8b1e"
+    },
+    {
+      "copy": "source/utils/loss.py",
+      "origin": "Self-Forcing-blockwise-layerwise/utils/loss.py",
+      "sha256": "5a08ba589ef54d5deb50d1ff1984f2969b1fdc2f03c53751167eb23a7082ecfe"
+    },
+    {
+      "copy": "source/utils/misc.py",
+      "origin": "Self-Forcing-blockwise-layerwise/utils/misc.py",
+      "sha256": "610bead16d50d99fabdccb2e9ce3c20fa1fa1cd3bdf735d7ff7ffda978bfe195"
+    },
+    {
+      "copy": "source/utils/scheduler.py",
+      "origin": "Self-Forcing-blockwise-layerwise/utils/scheduler.py",
+      "sha256": "4194ef1324bb06527621749c7f9a82f431ccf011823aa65099cb7bdf116b642e"
+    },
+    {
+      "copy": "source/utils/temporal_loop.py",
+      "origin": "Self-Forcing-blockwise-layerwise/utils/temporal_loop.py",
+      "sha256": "65bec3808788fec76d289d662ff69daf2271d029a3dae201dc30e841038b9339"
+    },
+    {
+      "copy": "source/utils/training_config.py",
+      "origin": "Self-Forcing-blockwise-layerwise/utils/training_config.py",
+      "sha256": "af488859a2da54059f35ca9f25e6fb858d902990c6b91f9388fba8b6716b47ad"
+    },
+    {
+      "copy": "source/utils/wan_wrapper.py",
+      "origin": "Self-Forcing-blockwise-layerwise/utils/wan_wrapper.py",
+      "sha256": "d9fe4c5bc1fc6684027f15caccd4d4620cc2503be3726a58f92fd60b17fdd633"
+    },
+    {
+      "copy": "source/wan/__init__.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/__init__.py",
+      "sha256": "d9390f993a448bd679ac8d5254620ca6b5d2bc450f65bbf5f4a64c82cb4f4a99"
+    },
+    {
+      "copy": "source/wan/configs/__init__.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/configs/__init__.py",
+      "sha256": "7b782183abca0e09c3efbc8ff02ab12c50c023d59642f6077cc16d1a23fa8bac"
+    },
+    {
+      "copy": "source/wan/configs/shared_config.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/configs/shared_config.py",
+      "sha256": "e3785cd01cff5763f83159ccc242f2d17435ba8dcef99f4a70db958c88e7f5ab"
+    },
+    {
+      "copy": "source/wan/configs/wan_i2v_14B.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/configs/wan_i2v_14B.py",
+      "sha256": "2d5a3ff4326a5b1c1c8d564f8a8829fe30879cb99fe0ad1b18c236ecb43aac54"
+    },
+    {
+      "copy": "source/wan/configs/wan_t2v_14B.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/configs/wan_t2v_14B.py",
+      "sha256": "a1d8f5f876fa20c4f58c5ee5433ca0d5e2cdf37accef7c97bc0c5aee7ba8db8c"
+    },
+    {
+      "copy": "source/wan/configs/wan_t2v_1_3B.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/configs/wan_t2v_1_3B.py",
+      "sha256": "28dea1d8ef2095d7ddd1e2506e7b498ba698b32e962bdbc79d6d7da3ca5a6d0c"
+    },
+    {
+      "copy": "source/wan/distributed/__init__.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/distributed/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "copy": "source/wan/distributed/fsdp.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/distributed/fsdp.py",
+      "sha256": "a20cbd8ea747db64226eb21e5e848c44cc2ccf95a76efbf13956efe8e9f900a3"
+    },
+    {
+      "copy": "source/wan/distributed/xdit_context_parallel.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/distributed/xdit_context_parallel.py",
+      "sha256": "b3b16b38dd08b0e857d90e4c97c7a41a06368be477abafa460ce3a44ea596474"
+    },
+    {
+      "copy": "source/wan/image2video.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/image2video.py",
+      "sha256": "46348294457e81210c70d40c6a1be6e24e5b749a48bf4aaac3febb6bd8e155ee"
+    },
+    {
+      "copy": "source/wan/modules/__init__.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/modules/__init__.py",
+      "sha256": "6cba8c084de01455a914a3b5620e0a286d4dee2c39143b6508bb8fac87e71b4b"
+    },
+    {
+      "copy": "source/wan/modules/attention.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/modules/attention.py",
+      "sha256": "02ad719a76e6bdec79d18fc62b094ef2ad7c28b2d593c9f395ae1226041b7c9d"
+    },
+    {
+      "copy": "source/wan/modules/causal_cache.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/modules/causal_cache.py",
+      "sha256": "682565dceb9ee9a33fdc93678df558428737a0df64a041a735a87e79d6bbe525"
+    },
+    {
+      "copy": "source/wan/modules/causal_model.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/modules/causal_model.py",
+      "sha256": "6d83e7ac56d4bfa5ef5093e7b636ed080e63be36e73dd658e52349d6533740a9"
+    },
+    {
+      "copy": "source/wan/modules/clip.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/modules/clip.py",
+      "sha256": "2ab8672603a998422defb897e16531608750737ab8d631520b055bda93aba35c"
+    },
+    {
+      "copy": "source/wan/modules/model.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/modules/model.py",
+      "sha256": "f15214485a5297e6f9e79684bbad80acbcdc88c3272596b256a739a734529449"
+    },
+    {
+      "copy": "source/wan/modules/t5.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/modules/t5.py",
+      "sha256": "8b0cebf3192c542f92a344255a06c203df3ba24160715899a055cc8de0cd930f"
+    },
+    {
+      "copy": "source/wan/modules/tokenizers.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/modules/tokenizers.py",
+      "sha256": "cf5b189c1ae017326efadab2fc6380ba223fa7a59d0be6464bd264db53c76934"
+    },
+    {
+      "copy": "source/wan/modules/vae.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/modules/vae.py",
+      "sha256": "a4c1d9362f25a1bef463ac51caed4097317c007d4d87887b02a3a733fdbc48d5"
+    },
+    {
+      "copy": "source/wan/modules/xlm_roberta.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/modules/xlm_roberta.py",
+      "sha256": "7e27d93573b5fb0fef1c9db9205264453bd30dcb1404c38031f24ed9c84b8d4a"
+    },
+    {
+      "copy": "source/wan/text2video.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/text2video.py",
+      "sha256": "ca344c0f24d3d305dd93a0433dc88a212e5d815bb8a784f8f54fc9fa98ff06c1"
+    },
+    {
+      "copy": "source/wan/utils/__init__.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/utils/__init__.py",
+      "sha256": "4a8d71cd9feefa65d51770ee8351a07cd6ebe82f9b75fef1ddaf0f30b4db502c"
+    },
+    {
+      "copy": "source/wan/utils/fm_solvers.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/utils/fm_solvers.py",
+      "sha256": "f7254e3ac5c6c6715317cdf991d927cde61c1400ad73851be41fc51ce5ecba5d"
+    },
+    {
+      "copy": "source/wan/utils/fm_solvers_unipc.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/utils/fm_solvers_unipc.py",
+      "sha256": "de622aced9aa5022622509295e5a0e40589b53f59ce13cf64061af9e99af5f66"
+    },
+    {
+      "copy": "source/wan/utils/prompt_extend.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/utils/prompt_extend.py",
+      "sha256": "f00f7f03ed5dc6d7648290c3d9b0f80b33d71692958542c447d722acc42dcbd6"
+    },
+    {
+      "copy": "source/wan/utils/qwen_vl_utils.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/utils/qwen_vl_utils.py",
+      "sha256": "9ae8190bdb0c6ad5b283fd9fecae65f3adfe45bc90326d3851fb5c8d777995c9"
+    },
+    {
+      "copy": "source/wan/utils/utils.py",
+      "origin": "Self-Forcing-blockwise-layerwise/wan/utils/utils.py",
+      "sha256": "ebf33b0c4dc69a62faca6243d58bfa890ea4fb9c056e7c1ef0fa501cbbe22566"
+    },
+    {
+      "copy": "source/configs/default_config.yaml",
+      "origin": "Self-Forcing-blockwise-layerwise/configs/default_config.yaml",
+      "sha256": "fa666bbdc60f668168cc5320395bde7698bd3879b813eb57773601b3c3bb4f57"
+    },
+    {
+      "copy": "export_checkpoint.py",
+      "origin": "scripts/nm5_looped_self_forcing_pipeline/export_checkpoint.py (adapted to Hydra and portable metadata)",
+      "sha256": "86501ff7482a397f21ebe407c5a4ec5a6d5bf297f575d27c5e80aa1e73e7d8ec"
+    },
+    {
+      "copy": "source/LICENSE",
+      "origin": "Self-Forcing-blockwise-layerwise/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    }
+  ]
+}

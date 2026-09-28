@@ -1,0 +1,5 @@
+name: nm5
+scheduler: slurm
+train_gpus: 4
+infer_gpus: 1
+cpus_per_gpu: 20
