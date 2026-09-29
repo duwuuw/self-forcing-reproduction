@@ -59,6 +59,15 @@ def test_hydra_composes_method_backend_stage_tracking_and_scale_groups():
     assert default.seed == 1
 
 
+def test_runtime_declares_private_slurm_notification_source():
+    config_module = _module("config")
+    runtime = config_module.load_runtime_config()
+
+    nm5 = runtime["backend_env"]["nm5"]
+    assert "SUE_SLURM_MAIL_USER" in nm5["required_keys"]
+    assert "Git config" in nm5["source_note"]
+
+
 def test_online_tracking_group_uses_same_comparison_project():
     config_module = _module("config")
     config = config_module.compose_config(["tracking=online"])
@@ -165,7 +174,10 @@ def test_neutral_runtime_keeps_reusable_policy_under_policy_namespace():
     assert runtime["sandbox_resources"]["nm5"]["train_gpus"] == 4
     assert runtime["sandbox_resources"]["autodl"]["infer_gpus"] == 1
     assert runtime["sandbox_script_folders"]["nm5"] == "slurm_scripts"
-    assert runtime["backend_env"]["nm5"]["source_note"] == "deepresearch-sandbox/config_nm5.txt"
+    assert runtime["backend_env"]["nm5"]["source_note"] == (
+        "deepresearch-sandbox/config_nm5.txt plus operator-shell SUE_SLURM_MAIL_USER "
+        "(e.g. from local Git config)"
+    )
     assert "NM5_WORKSPACE_ROOT" in runtime["backend_env"]["nm5"]["required_keys"]
     assert "SUE_ASSET_ROOT" not in runtime["backend_env"]["nm5"]["required_keys"]
     assert "NM5_HF_HUB_CACHE" in runtime["backend_env"]["nm5"]["required_keys"]
@@ -253,7 +265,7 @@ def test_runtime_paths_resolve_under_the_selected_bundle(tmp_path: Path):
         "backend: {primary: nm5}\n"
         "sandbox_script_folders: {nm5: slurm_scripts}\n"
         "sandbox_resources: {nm5: {partition: acc, qos: acc_ehpc, gpus_per_node: 4, gpu_type: H100, gpu_usable_memory_gib: 63.29, gpu_non_torch_reserve_gib: 7.0, max_nodes_per_job: 1, cpus_per_gpu: 20, timeout_kill_after_seconds: 300, finalization_grace_seconds: 600, train_gpus: 4, infer_gpus: 1}}\n"
-        "backend_env: {nm5: {source_note: deepresearch-sandbox/config_nm5.txt, required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, WANDB_API_KEY, WANDB_ENTITY]}}\n"
+        "backend_env: {nm5: {source_note: deepresearch-sandbox/config_nm5.txt plus operator Git config for SUE_SLURM_MAIL_USER, required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, SUE_SLURM_MAIL_USER, WANDB_API_KEY, WANDB_ENTITY]}}\n"
         "environment: {env_manager: conda, env_root: scale_up_outputs/envs, python_binary: scale_up_outputs/envs/miniconda3/envs/looped-self-forcing/bin/python, asset_root: Self-Forcing-blockwise-layerwise, python_overlay: envs/hydra_overlay, allowed_external_roots: [scale_up_outputs/envs, Self-Forcing-blockwise-layerwise], cache_env_sources: {HF_HOME: NM5_HF_HOME, HF_HUB_CACHE: NM5_HF_HUB_CACHE, MODELSCOPE_CACHE: NM5_MODELSCOPE_CACHE, TORCH_HOME: NM5_TORCH_HOME, MPLCONFIGDIR: NM5_MPLCONFIGDIR, WANDB_CACHE_DIR: NM5_WANDB_CACHE_DIR}}\n"
         "policy:\n"
         "  wandb_policy:\n"
@@ -620,7 +632,7 @@ def test_runtime_output_roots_reject_escape_paths(tmp_path: Path):
         "backend: {primary: nm5}\n"
         "sandbox_script_folders: {nm5: slurm_scripts}\n"
         "sandbox_resources: {nm5: {partition: acc, qos: acc_ehpc, gpus_per_node: 4, gpu_type: H100, gpu_usable_memory_gib: 63.29, gpu_non_torch_reserve_gib: 7.0, max_nodes_per_job: 1, cpus_per_gpu: 20, timeout_kill_after_seconds: 300, finalization_grace_seconds: 600, train_gpus: 4, infer_gpus: 1}}\n"
-        "backend_env: {nm5: {source_note: deepresearch-sandbox/config_nm5.txt, required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, WANDB_API_KEY, WANDB_ENTITY]}}\n"
+        "backend_env: {nm5: {source_note: deepresearch-sandbox/config_nm5.txt plus operator Git config for SUE_SLURM_MAIL_USER, required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, SUE_SLURM_MAIL_USER, WANDB_API_KEY, WANDB_ENTITY]}}\n"
         "environment: {env_manager: conda, env_root: scale_up_outputs/envs, python_binary: scale_up_outputs/envs/miniconda3/envs/looped-self-forcing/bin/python, asset_root: Self-Forcing-blockwise-layerwise, python_overlay: envs/hydra_overlay, allowed_external_roots: [scale_up_outputs/envs, Self-Forcing-blockwise-layerwise], cache_env_sources: {HF_HOME: NM5_HF_HOME, HF_HUB_CACHE: NM5_HF_HUB_CACHE, MODELSCOPE_CACHE: NM5_MODELSCOPE_CACHE, TORCH_HOME: NM5_TORCH_HOME, MPLCONFIGDIR: NM5_MPLCONFIGDIR, WANDB_CACHE_DIR: NM5_WANDB_CACHE_DIR}}\n"
         "policy:\n"
         "  wandb_policy:\n"
@@ -652,7 +664,7 @@ def test_runtime_config_root_is_fixed_for_the_bundle_bootstrap(tmp_path: Path):
         "backend: {primary: nm5}\n"
         "sandbox_script_folders: {nm5: slurm_scripts}\n"
         "sandbox_resources: {nm5: {partition: acc, qos: acc_ehpc, gpus_per_node: 4, gpu_type: H100, gpu_usable_memory_gib: 63.29, gpu_non_torch_reserve_gib: 7.0, max_nodes_per_job: 1, cpus_per_gpu: 20, timeout_kill_after_seconds: 300, finalization_grace_seconds: 600, train_gpus: 4, infer_gpus: 1}}\n"
-        "backend_env: {nm5: {source_note: deepresearch-sandbox/config_nm5.txt, required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, WANDB_API_KEY, WANDB_ENTITY]}}\n"
+        "backend_env: {nm5: {source_note: deepresearch-sandbox/config_nm5.txt plus operator Git config for SUE_SLURM_MAIL_USER, required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, SUE_SLURM_MAIL_USER, WANDB_API_KEY, WANDB_ENTITY]}}\n"
         "environment: {env_manager: conda, env_root: scale_up_outputs/envs, python_binary: scale_up_outputs/envs/miniconda3/envs/looped-self-forcing/bin/python, asset_root: Self-Forcing-blockwise-layerwise, python_overlay: envs/hydra_overlay, allowed_external_roots: [scale_up_outputs/envs, Self-Forcing-blockwise-layerwise], cache_env_sources: {HF_HOME: NM5_HF_HOME, HF_HUB_CACHE: NM5_HF_HUB_CACHE, MODELSCOPE_CACHE: NM5_MODELSCOPE_CACHE, TORCH_HOME: NM5_TORCH_HOME, MPLCONFIGDIR: NM5_MPLCONFIGDIR, WANDB_CACHE_DIR: NM5_WANDB_CACHE_DIR}}\n"
         "policy:\n"
         "  wandb_policy:\n"
@@ -726,7 +738,7 @@ def test_check_assets_uses_explicit_exp_dir_instead_of_environment(tmp_path: Pat
         "backend: {primary: nm5}\n"
         "sandbox_script_folders: {nm5: slurm_scripts}\n"
         "sandbox_resources: {nm5: {partition: acc, qos: acc_ehpc, gpus_per_node: 4, gpu_type: H100, gpu_usable_memory_gib: 63.29, gpu_non_torch_reserve_gib: 7.0, max_nodes_per_job: 1, cpus_per_gpu: 20, timeout_kill_after_seconds: 300, finalization_grace_seconds: 600, train_gpus: 4, infer_gpus: 1}}\n"
-        "backend_env: {nm5: {source_note: deepresearch-sandbox/config_nm5.txt, required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, WANDB_API_KEY, WANDB_ENTITY]}}\n"
+        "backend_env: {nm5: {source_note: deepresearch-sandbox/config_nm5.txt plus operator Git config for SUE_SLURM_MAIL_USER, required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, SUE_SLURM_MAIL_USER, WANDB_API_KEY, WANDB_ENTITY]}}\n"
         "environment: {env_manager: conda, env_root: scale_up_outputs/envs, python_binary: scale_up_outputs/envs/miniconda3/envs/looped-self-forcing/bin/python, asset_root: Self-Forcing-blockwise-layerwise, python_overlay: envs/hydra_overlay, allowed_external_roots: [scale_up_outputs/envs, Self-Forcing-blockwise-layerwise], cache_env_sources: {HF_HOME: NM5_HF_HOME, HF_HUB_CACHE: NM5_HF_HUB_CACHE, MODELSCOPE_CACHE: NM5_MODELSCOPE_CACHE, TORCH_HOME: NM5_TORCH_HOME, MPLCONFIGDIR: NM5_MPLCONFIGDIR, WANDB_CACHE_DIR: NM5_WANDB_CACHE_DIR}}\n"
         "policy:\n"
         "  wandb_policy:\n"

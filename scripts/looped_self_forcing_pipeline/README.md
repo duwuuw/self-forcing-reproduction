@@ -117,6 +117,9 @@ dirty state automatically. An archive deployment without `.git` must set
 `SUE_GIT_COMMIT` to the source commit SHA and `SUE_GIT_DIRTY` to `clean`,
 `dirty`, or `unknown`; both values are forwarded to the worker and recorded in
 the W&B run config.
+NM5 submission also requires `SUE_SLURM_MAIL_USER` from the operator's private
+environment and requests `END,FAIL,TIME_LIMIT` notifications; the address is
+not written to logs or W&B config.
 The Slurm job name uses the username from workspace user.yaml;
 invalid or missing values use the silly- prefix. Its remaining name matches the
 W&B experiment name after resolving method, run ID, and stage. Only selected

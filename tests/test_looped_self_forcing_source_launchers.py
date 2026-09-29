@@ -177,8 +177,8 @@ def _runner_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, dict[str, s
         "    infer_gpus: 1\n"
         "backend_env:\n"
         "  nm5:\n"
-        "    source_note: deepresearch-sandbox/config_nm5.txt\n"
-        "    required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, WANDB_API_KEY, WANDB_ENTITY]\n"
+        "    source_note: deepresearch-sandbox/config_nm5.txt plus operator Git config for SUE_SLURM_MAIL_USER\n"
+        "    required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, SUE_SLURM_MAIL_USER, WANDB_API_KEY, WANDB_ENTITY]\n"
         "environment:\n"
         "  env_manager: conda\n"
         "  env_root: scale_up_outputs/envs\n"
@@ -313,6 +313,7 @@ def _runner_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, dict[str, s
         "NM5_DEEPRESEARCH_ROOT": str(root),
         "AUTODL_DEEPRESEARCH_ROOT": str(root),
         "NM5_ACCOUNT": "test-account",
+        "SUE_SLURM_MAIL_USER": "fixture@example.invalid",
         "NM5_WORKSPACE_ROOT": str(private_workspace),
         "SUE_PYTHON": str(fake_python),
         "SUE_EXP_DIR": str(exp_dir),
@@ -407,9 +408,29 @@ def test_nm5_launcher_forwards_allowed_overrides_and_asset_env_to_slurm(tmp_path
     assert any(arg.startswith("--output=") and f"/{CUSTOM_LOGS_ROOT}/" in arg for arg in sbatch_args)
     assert any(arg.startswith("--error=") and f"/{CUSTOM_LOGS_ROOT}/" in arg for arg in sbatch_args)
     assert "--time=00:20:00" in sbatch_args
+    assert "--mail-type=END,FAIL,TIME_LIMIT" in sbatch_args
+    assert "--mail-user=fixture@example.invalid" in sbatch_args
+    assert "fixture@example.invalid" not in result.stdout + result.stderr
     assert "--job-name=tester-layerwise_l08_15_k2-run-one-train" in sbatch_args
     assert str(BUNDLE_SCRIPTS / "nm5_worker.sbatch") in sbatch_args
     assert CUSTOM_LOGS_ROOT not in result.stdout + result.stderr
+
+
+def test_nm5_launcher_requires_notification_address_before_submission(tmp_path: Path):
+    _, _, _, _, environment = _runner_fixture(tmp_path)
+    environment.pop("SUE_SLURM_MAIL_USER")
+
+    result = subprocess.run(
+        ["bash", str(BUNDLE_SCRIPTS / "nm5_submit.sh"), "train", "run-no-mail", "scale=smoke"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.returncode == 2
+    assert "SUE_SLURM_MAIL_USER is required" in result.stderr
+    assert not (tmp_path / "sbatch_count.txt").exists()
 
 
 def test_nm5_launcher_does_not_use_parent_repository_for_archive_provenance(
