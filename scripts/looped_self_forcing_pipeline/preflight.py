@@ -146,25 +146,59 @@ def verify_max_parallel_artifact(
     }
 
 
-def _submit_limit(values: str, *, label: str) -> int | None:
-    limits: list[int] = []
-    for line in values.splitlines():
-        for field in line.split("|"):
-            normalized = field.strip().upper()
-            if not normalized:
-                continue
-            if normalized in {"-1", "UNLIMITED", "INFINITE", "NONE"}:
-                continue
-            if not normalized.isdigit():
-                raise RuntimeError(f"sacctmgr returned an invalid {label} limit")
-            limits.append(int(normalized))
-    if not limits:
-        if values.strip():
-            return None
-        raise RuntimeError(f"sacctmgr returned no {label} limit evidence")
-    if any(limit == 0 for limit in limits):
+def _submit_limit_value(value: str, *, label: str) -> int | None:
+    normalized = value.strip().upper()
+    if normalized in {"", "-1", "UNLIMITED", "INFINITE", "NONE", "N/A", "NOT_SET", "UNSET"}:
+        return None
+    if not normalized.isdigit():
+        raise RuntimeError(f"sacctmgr returned an invalid {label} limit")
+    limit = int(normalized)
+    if limit == 0:
         raise RuntimeError(f"sacctmgr reports zero {label} submit capacity")
-    return min(limits)
+    return limit
+
+
+def _association_submit_limit(
+    output: str,
+    *,
+    username: str,
+    account: str,
+    qos: str,
+) -> int | None:
+    limits: list[int] = []
+    matching_rows = 0
+    for line in output.splitlines():
+        fields = [field.strip() for field in line.split("|")]
+        if len(fields) < 4 or fields[0] != username or fields[1] != account:
+            continue
+        matching_rows += 1
+        allowed_qos = {value.strip().casefold() for value in fields[2].split(",") if value.strip()}
+        if not allowed_qos:
+            raise RuntimeError("NM5 account association returned no allowed-QoS evidence")
+        if qos.casefold() not in allowed_qos:
+            raise RuntimeError("NM5 account association does not allow the runtime QoS")
+        limit = _submit_limit_value(fields[3], label="association")
+        if limit is not None:
+            limits.append(limit)
+    if not matching_rows:
+        raise RuntimeError("sacctmgr returned no matching NM5 user/account association row")
+    return min(limits) if limits else None
+
+
+def _qos_submit_limit(output: str, *, qos: str) -> int | None:
+    limits: list[int] = []
+    matching_rows = 0
+    for line in output.splitlines():
+        fields = [field.strip() for field in line.split("|")]
+        if len(fields) < 2 or fields[0] != qos:
+            continue
+        matching_rows += 1
+        limit = _submit_limit_value(fields[1], label="QoS")
+        if limit is not None:
+            limits.append(limit)
+    if not matching_rows:
+        raise RuntimeError("sacctmgr returned no matching runtime QoS row")
+    return min(limits) if limits else None
 
 
 def query_pending_submit_headroom(
@@ -198,7 +232,7 @@ def query_pending_submit_headroom(
                 "where",
                 f"user={user}",
                 f"account={account}",
-                "format=MaxSubmitJobs",
+                "format=User,Account,QOS,MaxSubmitJobs",
             ],
         ),
         (
@@ -211,7 +245,7 @@ def query_pending_submit_headroom(
                 "qos",
                 "where",
                 f"name={qos}",
-                "format=MaxSubmitJobsPerUser",
+                "format=Name,MaxSubmitJobsPerUser",
             ],
         ),
         (
@@ -235,8 +269,10 @@ def query_pending_submit_headroom(
         if getattr(result, "returncode", 1) != 0:
             raise RuntimeError(f"Slurm {label} query failed")
         results.append(result)
-    association_limit = _submit_limit(str(results[0].stdout), label="association")
-    qos_limit = _submit_limit(str(results[1].stdout), label="QoS")
+    association_limit = _association_submit_limit(
+        str(results[0].stdout), username=user, account=account, qos=qos
+    )
+    qos_limit = _qos_submit_limit(str(results[1].stdout), qos=qos)
     finite_limits = [limit for limit in (association_limit, qos_limit) if limit is not None]
     queue_rows = 0
     for line in str(results[2].stdout).splitlines():
@@ -259,8 +295,8 @@ def query_pending_submit_headroom(
         "limiting_factor": "association/QoS submit headroom",
         "evidence": {
             "commands": [
-                "sacctmgr show assoc MaxSubmitJobs",
-                "sacctmgr show qos MaxSubmitJobsPerUser",
+                "sacctmgr show assoc User,Account,QOS,MaxSubmitJobs",
+                "sacctmgr show qos Name,MaxSubmitJobsPerUser",
                 "squeue pending/running counts by runtime account or QoS",
             ],
             "raw_output_retained": False,

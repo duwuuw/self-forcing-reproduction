@@ -327,9 +327,9 @@ def test_pending_submit_query_requires_two_slots_without_recording_raw_output():
     def query(_command, **_kwargs):
         command = _command
         if command[0] != "squeue" and "assoc" in command:
-            output = "-1\n"
+            output = "fixture-user|private-account|acc_ehpc|-1\n"
         elif command[0] != "squeue":
-            output = "4\n"
+            output = "acc_ehpc|4\n"
         else:
             output = "RUNNING|private-account|acc_ehpc|acc\n"
         return SimpleNamespace(returncode=0, stdout=output, stderr="")
@@ -345,9 +345,9 @@ def test_pending_submit_query_requires_two_slots_without_recording_raw_output():
 
     def insufficient(command, **_kwargs):
         if command[0] != "squeue" and "assoc" in command:
-            output = "-1\n"
+            output = "fixture-user|private-account|acc_ehpc|-1\n"
         elif command[0] != "squeue":
-            output = "2\n"
+            output = "acc_ehpc|2\n"
         else:
             output = "RUNNING|private-account|acc_ehpc|acc\n"
         return SimpleNamespace(returncode=0, stdout=output, stderr="")
@@ -355,6 +355,92 @@ def test_pending_submit_query_requires_two_slots_without_recording_raw_output():
     with pytest.raises(RuntimeError, match="two-job dependency pair"):
         preflight.query_pending_submit_headroom(
             runtime, environment, run_command=insufficient, username="fixture-user"
+        )
+
+
+def test_pending_submit_query_accepts_verified_association_with_unset_submit_limit():
+    preflight = _module("preflight")
+    runtime = {"sandbox_resources": {"nm5": {"partition": "acc", "qos": "acc_ehpc"}}}
+    environment = {"NM5_ACCOUNT": "private-account"}
+
+    def query(command, **_kwargs):
+        if "assoc" in command:
+            output = "fixture-user|private-account|acc_ehpc|\n"
+        elif command[0] == "sacctmgr":
+            output = "acc_ehpc|366\n"
+        else:
+            output = "RUNNING|private-account|acc_ehpc|acc\n"
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+    result = preflight.query_pending_submit_headroom(
+        runtime, environment, run_command=query, username="fixture-user"
+    )
+
+    assert result["association_submit_limit"] is None
+    assert result["qos_submit_limit"] == 366
+    assert result["pending_submit_headroom"] == 365
+    assert result["pending_submit_slots_verified"] == 2
+    assert "private-account" not in json.dumps(result)
+    assert "fixture-user" not in json.dumps(result)
+
+
+def test_pending_submit_query_rejects_association_that_disallows_runtime_qos():
+    preflight = _module("preflight")
+    runtime = {"sandbox_resources": {"nm5": {"partition": "acc", "qos": "acc_ehpc"}}}
+    environment = {"NM5_ACCOUNT": "private-account"}
+
+    def query(command, **_kwargs):
+        if "assoc" in command:
+            output = "fixture-user|private-account|acc_debug|-1\n"
+        elif command[0] == "sacctmgr":
+            output = "acc_ehpc|366\n"
+        else:
+            output = ""
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+    with pytest.raises(RuntimeError, match="runtime QoS"):
+        preflight.query_pending_submit_headroom(
+            runtime, environment, run_command=query, username="fixture-user"
+        )
+
+
+def test_pending_submit_query_requires_association_qos_evidence():
+    preflight = _module("preflight")
+    runtime = {"sandbox_resources": {"nm5": {"partition": "acc", "qos": "acc_ehpc"}}}
+    environment = {"NM5_ACCOUNT": "private-account"}
+
+    def query(command, **_kwargs):
+        if "assoc" in command:
+            output = "fixture-user|private-account||-1\n"
+        elif command[0] == "sacctmgr":
+            output = "acc_ehpc|366\n"
+        else:
+            output = ""
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+    with pytest.raises(RuntimeError, match="no allowed-QoS evidence"):
+        preflight.query_pending_submit_headroom(
+            runtime, environment, run_command=query, username="fixture-user"
+        )
+
+
+def test_pending_submit_query_does_not_treat_minus_one_as_qos_wildcard():
+    preflight = _module("preflight")
+    runtime = {"sandbox_resources": {"nm5": {"partition": "acc", "qos": "acc_ehpc"}}}
+    environment = {"NM5_ACCOUNT": "private-account"}
+
+    def query(command, **_kwargs):
+        if "assoc" in command:
+            output = "fixture-user|private-account|-1|-1\n"
+        elif command[0] == "sacctmgr":
+            output = "acc_ehpc|366\n"
+        else:
+            output = ""
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+    with pytest.raises(RuntimeError, match="runtime QoS"):
+        preflight.query_pending_submit_headroom(
+            runtime, environment, run_command=query, username="fixture-user"
         )
 
 
@@ -470,9 +556,11 @@ def test_pair_preflight_runs_static_gates_for_both_profiles(monkeypatch, tmp_pat
     checked = []
     def fake_slurm_query(command, **_kwargs):
         if command[0] == "sacctmgr" and "assoc" in command:
-            output = "-1\n"
+            user = next(value.partition("=")[2] for value in command if value.startswith("user="))
+            account = next(value.partition("=")[2] for value in command if value.startswith("account="))
+            output = f"{user}|{account}|acc_ehpc|-1\n"
         elif command[0] == "sacctmgr":
-            output = "4\n"
+            output = "acc_ehpc|4\n"
         else:
             output = "RUNNING|fixture-account|acc_ehpc|acc\n"
         return SimpleNamespace(returncode=0, stdout=output, stderr="")
