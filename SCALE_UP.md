@@ -328,3 +328,14 @@ burns its queue slot. Verified all three branches: alternative tree passes,
 default tree passes, missing asset exits 2 with the fix printed.
 
 - **source**: workspace/looped-flow-matching
+
+## Search round 6 — copied trainer source import order (2026-09-29)
+
+### Put copied source ahead of the workspace CLI module
+- **sandbox**: NM5
+- **session**: dryrun
+- **date**: 2026-09-29
+- **trigger**: The 23–30 layerwise smoke failed in every rank while importing `SelfForcingTrainingPipeline`. Python resolved the workspace-level `pipeline.py` CLI module instead of the copied trainer's `source/pipeline/` package.
+- **wrong**: Only insert `SOURCE_ROOT` at the front when it is absent from `sys.path`; it may already be present later via `PYTHONPATH`, leaving a same-named launcher module ahead of it.
+- **correct**: Remove existing `SOURCE_ROOT` entries and put it at `sys.path[0]` before importing copied trainer modules. Keep a `PathFinder` regression test proving `source/pipeline/__init__.py` wins when the workspace package root is also on the search path.
+- **source**: workspace/looped-flow-matching

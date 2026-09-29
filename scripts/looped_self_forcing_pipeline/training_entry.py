@@ -13,9 +13,14 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 SOURCE_ROOT = PACKAGE_ROOT / "source"
 
 
+def prioritize_source_root(search_path: list[str]) -> None:
+    source_root = str(SOURCE_ROOT)
+    search_path[:] = [entry for entry in search_path if entry != source_root]
+    search_path.insert(0, source_root)
+
+
 def main(argv: list[str] | None = None) -> int:
-    if str(SOURCE_ROOT) not in sys.path:
-        sys.path.insert(0, str(SOURCE_ROOT))
+    prioritize_source_root(sys.path)
     import wandb
     import train_blockwise_lora_dmd as copied_wrapper
     import trainer.distillation as distillation
