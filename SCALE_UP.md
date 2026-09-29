@@ -339,3 +339,14 @@ default tree passes, missing asset exits 2 with the fix printed.
 - **wrong**: Only insert `SOURCE_ROOT` at the front when it is absent from `sys.path`; it may already be present later via `PYTHONPATH`, leaving a same-named launcher module ahead of it.
 - **correct**: Remove existing `SOURCE_ROOT` entries and put it at `sys.path[0]` before importing copied trainer modules. Keep a `PathFinder` regression test proving `source/pipeline/__init__.py` wins when the workspace package root is also on the search path.
 - **source**: workspace/looped-flow-matching
+
+## Search round 7 — NM5 copied-worker asset-root CWD (2026-09-29)
+
+### Run copied workers from the configured asset root
+- **sandbox**: NM5
+- **session**: dryrun
+- **date**: 2026-09-29
+- **trigger**: Stage preflight found model files under the configured asset root, but the real worker ran from the copied source directory and the upstream loader treated relative `wan_models/...` as a Hub repo ID.
+- **wrong**: Validate model paths under `SUE_ASSET_ROOT` while launching the actual train/inference process with `cwd=SOURCE_ROOT`.
+- **correct**: Launch actual train/inference subprocesses with `cwd=prepared["assets"]["asset_root"]`; resolve each copied entrypoint's `configs/default_config.yaml` relative to `Path(__file__).parent` so preflight and runtime use the same copied config regardless of CWD.
+- **source**: workspace/looped-flow-matching

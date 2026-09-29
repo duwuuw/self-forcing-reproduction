@@ -1117,7 +1117,12 @@ def _execute_worker_body(
             )
             tracking_run_id = str(getattr(tracking_run, "id", "") or "")
 
-        result = subprocess.run(command, cwd=SOURCE_ROOT, env=environment, check=False)
+        result = subprocess.run(
+            command,
+            cwd=prepared["assets"]["asset_root"],
+            env=environment,
+            check=False,
+        )
         elapsed = max(time.monotonic() - started_at, 1e-9)
         if result.returncode != 0:
             raise subprocess.CalledProcessError(result.returncode, command)

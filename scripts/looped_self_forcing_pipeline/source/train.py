@@ -1,5 +1,6 @@
 import argparse
 import os
+from pathlib import Path
 from omegaconf import OmegaConf
 from utils.training_config import validate_training_preflight
 
@@ -23,7 +24,10 @@ def build_parser():
 
 
 def load_config(config_path, temporal_loop_config_path=None):
-    default_config = OmegaConf.load("configs/default_config.yaml")
+    default_config_path = (
+        Path(__file__).resolve().parent / "configs" / "default_config.yaml"
+    )
+    default_config = OmegaConf.load(default_config_path)
     config = OmegaConf.load(config_path)
     if temporal_loop_config_path:
         temporal_loop_config = OmegaConf.load(temporal_loop_config_path)

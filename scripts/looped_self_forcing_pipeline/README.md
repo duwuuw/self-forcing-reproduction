@@ -27,6 +27,23 @@ the NM5 launcher resolves the interpreter and asset root from `runtime.yaml`.
 It adds `environment.python_overlay` to the Python import path when configured.
 Do not put resolved backend paths in tracked files or CLI overrides.
 
+### Model and checkpoint roles
+
+The selected method's `generator_ckpt` is the rewrapped released Self-Forcing
+DMD EMA generator checkpoint. Training first constructs the causal Wan2.1
+T2V 1.3B architecture from `wan_models/Wan2.1-T2V-1.3B`, then loads this full
+generator checkpoint strictly before injecting the selected-block LoRA
+adapters. If that load succeeds, the EMA checkpoint replaces the initial
+generator weights. The separate Wan1.3B fake-score model, T5 encoder, and VAE
+still use the Wan1.3B asset tree; `teacher_checkpoint` supplies the Wan2.1
+T2V 14B real-score teacher.
+
+Actual train and inference worker subprocesses use the configured asset root as
+their working directory because the copied upstream code opens `wan_models/`
+and related assets with relative paths. Both entrypoints load
+`source/configs/default_config.yaml` relative to their own source file, so
+their defaults do not depend on that working directory.
+
 The NM5 runtime maps cache paths from ignored `NM5_HF_HOME`,
 `NM5_HF_HUB_CACHE`, `NM5_MODELSCOPE_CACHE`, `NM5_TORCH_HOME`,
 `NM5_MPLCONFIGDIR`, and `NM5_WANDB_CACHE_DIR` values. Launch preflight requires

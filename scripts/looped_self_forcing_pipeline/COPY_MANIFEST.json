@@ -39,7 +39,7 @@
     {
       "copy": "source/inference.py",
       "origin": "Self-Forcing-blockwise-layerwise/inference.py",
-      "sha256": "9455d62b76439c190a73690fc7df12766f384aa81be48c8b495610415672c45b"
+      "sha256": "5ebc5cf1ab4a1a8437c293976251bf3a217bb7ef21dbcac86963faee705800ba"
     },
     {
       "copy": "source/model/__init__.py",
@@ -124,7 +124,7 @@
     {
       "copy": "source/train.py",
       "origin": "Self-Forcing-blockwise-layerwise/train.py",
-      "sha256": "7c9a991a2490e84ccd3469f7d3138e3a58d1f8d681066a4e37a9a24af3b6e5ed"
+      "sha256": "f253c1af30afd9ffa3175f63250807f1f648584c37fbe14a3266f9febe02888c"
     },
     {
       "copy": "source/train_blockwise_lora_dmd.py",

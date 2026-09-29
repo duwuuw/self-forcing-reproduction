@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -769,6 +770,8 @@ def test_completed_training_ledger_seed_matches_checkpoint_evidence(
     checkpoint_root = exp_dir / "ckpt" / run_id
     results_root = exp_dir / "final_result" / run_id
     checkpoint_root.mkdir(parents=True)
+    asset_root = tmp_path / "configured-assets"
+    asset_root.mkdir()
     prepared = {
         "exp_dir": exp_dir.resolve(),
         "run_root": run_root,
@@ -784,6 +787,7 @@ def test_completed_training_ledger_seed_matches_checkpoint_evidence(
             "slurm_scripts_root": exp_dir / "slurm_scripts",
         },
         "method": {"profile_id": "layer-profile", "mode": "layer"},
+        "assets": {"asset_root": asset_root.resolve()},
         "manifest": {"assets": {"generator_checkpoint_sha256": "a" * 64}},
     }
     observed = {}
@@ -1006,3 +1010,67 @@ def test_ledger_upserts_a_row_with_reproducibility_fields(tmp_path: Path):
     assert rows[0]["training_speed"] == "0.5"
     assert rows[0]["parameter_count"] == ""
     assert rows[0]["trainable_parameter_count"] == "123"
+
+
+@pytest.mark.parametrize("stage", ["train", "infer"])
+def test_worker_subprocess_runs_from_configured_asset_root(
+    tmp_path: Path, monkeypatch, stage: str
+):
+    worker = _module("worker")
+    exp_dir = tmp_path / "bundle"
+    asset_root = tmp_path / "configured-assets"
+    asset_root.mkdir()
+    output_roots = {
+        "artifacts_root": exp_dir / "artifacts",
+        "ckpt_root": exp_dir / "ckpt",
+        "final_result_root": exp_dir / "final_result",
+        "ledger_csv": exp_dir / "artifacts/experiment_results.csv",
+    }
+    run_id = f"cwd-{stage}"
+    checkpoint_root = output_roots["ckpt_root"] / run_id
+    results_root = output_roots["final_result_root"] / run_id
+    prepared = {
+        "exp_dir": exp_dir.resolve(),
+        "run_root": output_roots["artifacts_root"] / run_id,
+        "checkpoint_root": checkpoint_root,
+        "results_root": results_root,
+        "final_model": checkpoint_root / "model.pt",
+        "output_roots": output_roots,
+        "method": {"profile_id": "layer-profile", "mode": "layer"},
+        "assets": {"asset_root": asset_root.resolve()},
+        "manifest": {"assets": {"generator_checkpoint_sha256": "a" * 64}},
+    }
+    observed = {}
+
+    def run_command(_command, **kwargs):
+        observed["cwd"] = Path(kwargs["cwd"])
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(worker, "_validate_tracking_environment", lambda _config: None)
+    monkeypatch.setattr(worker, "require_ffprobe", lambda: None)
+    monkeypatch.setattr(worker, "prepare_stage", lambda *_args, **_kwargs: prepared)
+    monkeypatch.setattr(worker, "_require_gpu_capacity", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker, "require_fresh_training_outputs", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker, "require_fresh_inference_outputs", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker, "_build_worker_environment", lambda *_args: {})
+    monkeypatch.setattr(worker, "_command_for", lambda *_args: ["worker"])
+    monkeypatch.setattr(worker.subprocess, "run", run_command)
+    config = SimpleNamespace(
+        run_id=run_id,
+        backend=SimpleNamespace(name="nm5"),
+        method={"profile_id": "layer-profile", "temporal_loop": {"mode": "layer"}},
+        tracking={"mode": "offline", "required": False, "project": "comparison"},
+        train=SimpleNamespace(max_steps=1, seed=7),
+        infer=SimpleNamespace(seed=7),
+    )
+
+    with pytest.raises(subprocess.CalledProcessError):
+        worker._execute_worker_body(
+            config,
+            stage,
+            exp_dir=exp_dir,
+            ledger_path=output_roots["ledger_csv"],
+            ledger_row={},
+        )
+
+    assert observed["cwd"] == asset_root.resolve()

@@ -26,7 +26,8 @@ def build_parser():
 
 
 def load_config(config_path, temporal_loop_config_path=None):
-    default_config = OmegaConf.load("configs/default_config.yaml")
+    default_config = Path(__file__).resolve().parent / "configs" / "default_config.yaml"
+    default_config = OmegaConf.load(default_config)
     config = OmegaConf.load(config_path)
     if temporal_loop_config_path:
         temporal_loop_config = OmegaConf.load(temporal_loop_config_path)
