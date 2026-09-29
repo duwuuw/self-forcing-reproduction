@@ -57,7 +57,6 @@ pipeline="$workspace/scripts/looped_self_forcing_pipeline/pipeline.py"
   exit 2
 }
 configure_code_provenance "$workspace"
-configure_slurm_notifications
 
 if [[ -z "${SUE_EXP_DIR:-}" ]]; then
   SUE_EXP_DIR="$workspace/scale_up_outputs/looped_self_forcing_pipeline"
@@ -206,7 +205,7 @@ dependency_args=()
 if [[ -n "$dependency_job" ]]; then
   dependency_args+=("--dependency=afterany:$dependency_job")
 fi
-mail_args=(--mail-type=END,FAIL,TIME_LIMIT --mail-user="$SUE_SLURM_MAIL_USER")
+unset SBATCH_MAIL_USER SBATCH_MAIL_TYPE
 job_id="$(sbatch --parsable \
   --chdir="$workspace" \
   --account="$NM5_ACCOUNT" \
@@ -217,8 +216,8 @@ job_id="$(sbatch --parsable \
   --cpus-per-task="$((runtime_cpus_per_gpu * gpus))" \
   --time="$SUE_SLURM_REQUEST_TIME" \
   --job-name="$job_name" \
+  --mail-type=NONE \
   "${dependency_args[@]}" \
-  "${mail_args[@]}" \
   --output="$logs_root/${run_id}_${stage}_%j.out" \
   --error="$logs_root/${run_id}_${stage}_%j.err" \
   --export=NM5_DEEPRESEARCH_ROOT,SUE_PYTHON,SUE_EXP_DIR,SUE_SCRIPTS_DIR,SUE_ASSET_ROOT,SUE_GIT_COMMIT,SUE_GIT_DIRTY,SUE_PYTHONPATH,PYTHONPATH,SUE_MEM_PROBE,SUE_MEM_PROBE_STEP,PATH,LD_LIBRARY_PATH,CUDA_HOME,ROCM_PATH,WANDB_API_KEY,WANDB_ENTITY,$SUE_NM5_CACHE_EXPORTS \

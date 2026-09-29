@@ -31,7 +31,7 @@ sandbox_resources:
 
 backend_env:
   nm5:
-    source_note: deepresearch-sandbox/config_nm5.txt plus operator-shell SUE_SLURM_MAIL_USER (e.g. from local Git config)
+    source_note: deepresearch-sandbox/config_nm5.txt
     required_keys:
       - NM5_DEEPRESEARCH_ROOT
       - NM5_WORKSPACE_ROOT
@@ -43,7 +43,6 @@ backend_env:
       - NM5_TORCH_HOME
       - NM5_MPLCONFIGDIR
       - NM5_WANDB_CACHE_DIR
-      - SUE_SLURM_MAIL_USER
       - WANDB_API_KEY
       - WANDB_ENTITY
 

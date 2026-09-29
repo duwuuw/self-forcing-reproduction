@@ -177,8 +177,8 @@ def _runner_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, dict[str, s
         "    infer_gpus: 1\n"
         "backend_env:\n"
         "  nm5:\n"
-        "    source_note: deepresearch-sandbox/config_nm5.txt plus operator Git config for SUE_SLURM_MAIL_USER\n"
-        "    required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, SUE_SLURM_MAIL_USER, WANDB_API_KEY, WANDB_ENTITY]\n"
+        "    source_note: deepresearch-sandbox/config_nm5.txt\n"
+        "    required_keys: [NM5_DEEPRESEARCH_ROOT, NM5_WORKSPACE_ROOT, NM5_ACCOUNT, NM5_LOGIN_SSH, NM5_HF_HOME, NM5_HF_HUB_CACHE, NM5_MODELSCOPE_CACHE, NM5_TORCH_HOME, NM5_MPLCONFIGDIR, NM5_WANDB_CACHE_DIR, WANDB_API_KEY, WANDB_ENTITY]\n"
         "environment:\n"
         "  env_manager: conda\n"
         "  env_root: scale_up_outputs/envs\n"
@@ -243,6 +243,7 @@ def _runner_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, dict[str, s
 
     sbatch_calls = tmp_path / "sbatch_args.bin"
     sbatch_count = tmp_path / "sbatch_count.txt"
+    sbatch_env = tmp_path / "sbatch_env.txt"
     sbatch = bin_dir / "sbatch"
     sbatch.write_text(
         "#!/usr/bin/env bash\n"
@@ -250,6 +251,7 @@ def _runner_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, dict[str, s
         "count=$((count + 1))\n"
         f"printf '%s' \"$count\" > {shlex.quote(str(sbatch_count))}\n"
         f"printf '%s\\0' \"$@\" >> {shlex.quote(str(sbatch_calls))}\nprintf '\\0' >> {shlex.quote(str(sbatch_calls))}\n"
+        f"printf '%s\\n' \"${{SBATCH_MAIL_TYPE-<unset>}}\" \"${{SBATCH_MAIL_USER-<unset>}}\" > {shlex.quote(str(sbatch_env))}\n"
         "if [[ -n \"${ORDER_TRACE:-}\" ]]; then printf 'SBATCH probe=%s step=%s\\n' \"${SUE_MEM_PROBE-}\" \"${SUE_MEM_PROBE_STEP-}\" >> \"$ORDER_TRACE\"; fi\n"
         "printf '%s\\n' \"$((50122 + count))\"\n",
         encoding="utf-8",
@@ -353,6 +355,8 @@ def test_nm5_launcher_forwards_allowed_overrides_and_asset_env_to_slurm(tmp_path
     script = BUNDLE_SCRIPTS / "nm5_submit.sh"
     environment["SUE_GIT_COMMIT"] = "abc123def456"
     environment["SUE_GIT_DIRTY"] = "clean"
+    environment["SBATCH_MAIL_TYPE"] = "END,FAIL"
+    environment["SBATCH_MAIL_USER"] = "inherited@example.invalid"
     overrides = [
         "method=layerwise_l08_15_k2",
         "tracking=offline",
@@ -408,15 +412,20 @@ def test_nm5_launcher_forwards_allowed_overrides_and_asset_env_to_slurm(tmp_path
     assert any(arg.startswith("--output=") and f"/{CUSTOM_LOGS_ROOT}/" in arg for arg in sbatch_args)
     assert any(arg.startswith("--error=") and f"/{CUSTOM_LOGS_ROOT}/" in arg for arg in sbatch_args)
     assert "--time=00:20:00" in sbatch_args
-    assert "--mail-type=END,FAIL,TIME_LIMIT" in sbatch_args
-    assert "--mail-user=fixture@example.invalid" in sbatch_args
+    assert "--mail-type=NONE" in sbatch_args
+    assert not any(arg.startswith("--mail-user") for arg in sbatch_args)
+    assert (tmp_path / "sbatch_env.txt").read_text(encoding="utf-8").splitlines() == [
+        "<unset>",
+        "<unset>",
+    ]
     assert "fixture@example.invalid" not in result.stdout + result.stderr
+    assert "inherited@example.invalid" not in result.stdout + result.stderr
     assert "--job-name=tester-layerwise_l08_15_k2-run-one-train" in sbatch_args
     assert str(BUNDLE_SCRIPTS / "nm5_worker.sbatch") in sbatch_args
     assert CUSTOM_LOGS_ROOT not in result.stdout + result.stderr
 
 
-def test_nm5_launcher_requires_notification_address_before_submission(tmp_path: Path):
+def test_nm5_launcher_submits_without_notification_address(tmp_path: Path):
     _, _, _, _, environment = _runner_fixture(tmp_path)
     environment.pop("SUE_SLURM_MAIL_USER")
 
@@ -428,9 +437,11 @@ def test_nm5_launcher_requires_notification_address_before_submission(tmp_path: 
         env=environment,
     )
 
-    assert result.returncode == 2
-    assert "SUE_SLURM_MAIL_USER is required" in result.stderr
-    assert not (tmp_path / "sbatch_count.txt").exists()
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "sbatch_count.txt").read_text(encoding="utf-8") == "1"
+    sbatch_args = (tmp_path / "sbatch_args.bin").read_bytes().decode().rstrip("\0").split("\0")
+    assert "--mail-type=NONE" in sbatch_args
+    assert not any(arg.startswith("--mail-user") for arg in sbatch_args)
 
 
 def test_nm5_launcher_does_not_use_parent_repository_for_archive_provenance(

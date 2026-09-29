@@ -155,7 +155,6 @@ def resolve_runtime_paths(exp_dir: str | Path | None = None) -> dict[str, Path]:
             "NM5_WORKSPACE_ROOT",
             "NM5_ACCOUNT",
             "NM5_LOGIN_SSH",
-            "SUE_SLURM_MAIL_USER",
             "WANDB_API_KEY",
             "WANDB_ENTITY",
         } - required_env_keys

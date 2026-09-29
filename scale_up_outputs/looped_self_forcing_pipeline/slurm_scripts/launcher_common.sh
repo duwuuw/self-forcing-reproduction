@@ -69,15 +69,6 @@ configure_code_provenance() {
   export SUE_GIT_COMMIT SUE_GIT_DIRTY
 }
 
-configure_slurm_notifications() {
-  local mail_user=${SUE_SLURM_MAIL_USER:-}
-  [[ "$mail_user" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] || {
-    printf 'SUE_SLURM_MAIL_USER is required as a valid notification address\n' >&2
-    return 2
-  }
-  export SUE_SLURM_MAIL_USER="$mail_user"
-}
-
 resolve_logs_root() {
   local scripts_root=$1
   local exp_dir=$2
