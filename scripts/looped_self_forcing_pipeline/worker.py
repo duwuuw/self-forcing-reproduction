@@ -1145,6 +1145,9 @@ def _execute_worker_body(
                 expected_step=expected_steps,
                 expected_seed=expected_seed,
             )
+            _check_adapter_scope(
+                evidence["payload"]["generator"], prepared["method"], "generator"
+            )
             if evidence["metadata"].get("final") is not True:
                 raise RuntimeError("final training checkpoint is not marked final=true")
             _lightweight_model(latest, prepared["final_model"])

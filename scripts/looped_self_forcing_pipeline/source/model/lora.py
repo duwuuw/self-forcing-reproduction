@@ -197,13 +197,41 @@ def assert_lora_trainable_scope(
         raise AssertionError("only LoRA A/B parameters may be trainable")
 
 
-def extract_lora_state_dict(model: nn.Module) -> dict[str, torch.Tensor]:
+def _portable_lora_name(name: str) -> str:
+    wrappers = {
+        "_fsdp_wrapped_module",
+        "_checkpoint_wrapped_module",
+        "_orig_mod",
+    }
+    segments = [segment for segment in str(name).split(".") if segment not in wrappers]
+    if segments and segments[0] == "model":
+        segments.pop(0)
+    if len(segments) >= 2 and segments[-2] == "default":
+        segments.pop(-2)
+    return ".".join(segments)
+
+
+def extract_lora_state_dict(
+    model: nn.Module,
+    expected_names: Sequence[str] | None = None,
+) -> dict[str, torch.Tensor]:
     if not hasattr(model, "peft_config"):
         return {}
-    from peft import get_peft_model_state_dict
 
-    state = get_peft_model_state_dict(model)
-    return {name: value.detach().cpu().clone() for name, value in state.items()}
+    state = {
+        _portable_lora_name(name): parameter.detach().cpu().clone()
+        for name, parameter in model.named_parameters()
+        if parameter.requires_grad
+        and (".lora_A." in f".{name}." or ".lora_B." in f".{name}.")
+    }
+    if expected_names is not None:
+        expected = {_portable_lora_name(name) for name in expected_names}
+        if set(state) != expected:
+            raise ValueError(
+                "generator adapter parameter set does not match injected scope: "
+                f"expected={sorted(expected)}, actual={sorted(state)}"
+            )
+    return state
 
 
 def load_lora_state_dict(model: nn.Module, state_dict: Mapping[str, torch.Tensor]) -> None:
@@ -251,6 +279,20 @@ def build_lora_checkpoint_payload(
     metadata: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Build the adapter-only checkpoint envelope used by the trainer."""
+
+    generator_names = set(generator)
+    if not generator_names:
+        raise ValueError("generator adapter mapping must not be empty")
+    out_of_scope = sorted(
+        name
+        for name in generator_names
+        if not str(name).endswith((".lora_A.weight", ".lora_B.weight"))
+    )
+    if out_of_scope:
+        raise ValueError(
+            "generator adapter mapping contains out-of-scope keys: "
+            f"{out_of_scope}"
+        )
 
     return {
         "checkpoint_version": 1,

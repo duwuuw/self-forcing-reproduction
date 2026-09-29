@@ -54,15 +54,17 @@ def _lora_model_from_wrapper(model):
     return candidate
 
 
-def fsdp_lora_state_dict(model):
+def fsdp_lora_state_dict(model, expected_names=None):
     """Gather adapter-only state from an FSDP or ordinary generator wrapper."""
 
     from model.lora import extract_lora_state_dict
 
     if isinstance(model, FSDP):
         with FSDP.summon_full_params(model, writeback=False):
-            return extract_lora_state_dict(_lora_model_from_wrapper(model))
-    return extract_lora_state_dict(_lora_model_from_wrapper(model))
+            return extract_lora_state_dict(
+                _lora_model_from_wrapper(model), expected_names
+            )
+    return extract_lora_state_dict(_lora_model_from_wrapper(model), expected_names)
 
 
 def load_fsdp_lora_state_dict(model, state_dict):

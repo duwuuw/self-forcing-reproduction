@@ -236,7 +236,10 @@ class Trainer:
         print("Start gathering distributed model states...")
         if self.model.lora_enabled:
             state_dict = build_lora_checkpoint_payload(
-                generator=fsdp_lora_state_dict(self.model.generator),
+                generator=fsdp_lora_state_dict(
+                    self.model.generator,
+                    self.model.lora_parameter_names,
+                ),
                 critic=fsdp_state_dict(self.model.fake_score),
                 generator_ema=(
                     self.generator_ema.state_dict()

@@ -241,6 +241,25 @@ def test_training_evidence_seed_matches_the_ledger_seed(tmp_path: Path):
         worker.verify_training_checkpoint(path, expected_step=10, expected_seed=18)
 
 
+def test_training_adapter_scope_rejects_valid_lora_key_outside_selected_layers():
+    worker = _module("worker")
+    method = {
+        "layer_start": 22,
+        "layer_end": 29,
+        "lora": {"target_modules": ["self_attn.q", "self_attn.v"]},
+    }
+    state = {
+        f"blocks.{layer}.self_attn.{target}.lora_{matrix}.weight": 1
+        for layer in range(22, 30)
+        for target in ("q", "v")
+        for matrix in ("A", "B")
+    }
+    state["blocks.21.self_attn.q.lora_A.weight"] = 1
+
+    with pytest.raises(ValueError, match="adapter scope differs.*extra"):
+        worker._check_adapter_scope(state, method, "generator")
+
+
 def test_inference_evidence_checks_each_expected_video_is_decodable(tmp_path: Path):
     worker = _module("worker")
     outputs = tmp_path / "output"
@@ -786,7 +805,13 @@ def test_completed_training_ledger_seed_matches_checkpoint_evidence(
             "datasets_root": exp_dir / "datasets",
             "slurm_scripts_root": exp_dir / "slurm_scripts",
         },
-        "method": {"profile_id": "layer-profile", "mode": "layer"},
+        "method": {
+            "profile_id": "layer-profile",
+            "mode": "layer",
+            "layer_start": 22,
+            "layer_end": 29,
+            "lora": {"target_modules": ["self_attn.q", "self_attn.v"]},
+        },
         "assets": {"asset_root": asset_root.resolve()},
         "manifest": {"assets": {"generator_checkpoint_sha256": "a" * 64}},
     }
@@ -798,11 +823,24 @@ def test_completed_training_ledger_seed_matches_checkpoint_evidence(
 
     def verify(_path, *, expected_step, expected_seed):
         observed.update(expected_step=expected_step, expected_seed=expected_seed)
+        generator = {
+            f"blocks.{layer}.self_attn.{target}.lora_{matrix}.weight": 1
+            for layer in range(22, 30)
+            for target in ("q", "v")
+            for matrix in ("A", "B")
+        }
         return {
             "step": expected_step,
             "metadata": {"step": expected_step, "seed": expected_seed, "final": True},
             "trainable_parameter_count": 8,
+            "payload": {"generator": generator},
         }
+
+    original_scope_check = worker._check_adapter_scope
+
+    def check_scope(state, method, label):
+        observed["scope"] = (len(state), method["layer_start"], method["layer_end"], label)
+        return original_scope_check(state, method, label)
 
     monkeypatch.setattr(worker, "_validate_tracking_environment", lambda _config: None)
     monkeypatch.setattr(worker, "prepare_stage", lambda *_args, **_kwargs: prepared)
@@ -812,6 +850,7 @@ def test_completed_training_ledger_seed_matches_checkpoint_evidence(
     monkeypatch.setattr(worker, "_command_for", lambda *_args: ["worker"])
     monkeypatch.setattr(worker.subprocess, "run", run_command)
     monkeypatch.setattr(worker, "verify_training_checkpoint", verify)
+    monkeypatch.setattr(worker, "_check_adapter_scope", check_scope)
     monkeypatch.setattr(worker, "_lightweight_model", lambda *_args: None)
     config = SimpleNamespace(
         run_id=run_id,
@@ -828,7 +867,11 @@ def test_completed_training_ledger_seed_matches_checkpoint_evidence(
         newline="", encoding="utf-8"
     ) as stream:
         row = next(csv.DictReader(stream))
-    assert observed == {"expected_step": 20, "expected_seed": 17}
+    assert observed == {
+        "expected_step": 20,
+        "expected_seed": 17,
+        "scope": (32, 22, 29, "generator"),
+    }
     assert row["seed"] == str(observed["expected_seed"])
     assert row["trainable_parameter_count"] == "8"
     assert row["parameter_count"] == ""

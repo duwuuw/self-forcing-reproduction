@@ -178,18 +178,25 @@ adds the 300-second kill-after and 600-second finalization grace, for a
 2,700-second (45-minute) walltime request per job.
 Each job requests four GPUs; the second uses an afterany dependency on the first,
 so they cannot overlap. After both jobs finish, validate their scheduler state,
-final checkpoint, W&B identity and artifacts, ledger rows, and four step-3
-memory peaks with no probe warning or OOM evidence. Then record the immutable
-readiness stamp:
+final checkpoint, ledger rows, and four step-3 memory peaks with no probe
+warning or OOM evidence. W&B acceptance requires more than an offline run ID:
+inspect the real offline event history, verify the resolved run config, and
+require finite loss records at the expected steps. For the 10-step K3 smoke
+this means generator and critic loss at step 1 and critic loss at step 10. Then
+record the immutable readiness stamp:
 
 ~~~bash
 bash scale_up_outputs/looped_self_forcing_pipeline/slurm_scripts/nm5_submit_pair_23_30.sh \
   --verify-smoke "$SMOKE_PAIR_ID"
 ~~~
 
-The stamp is stored under paths.readiness_root and records bundle-relative
-references and hashes for checkpoints, manifests, ledger rows, W&B identities,
-Slurm logs, the submission receipt, and the fresh smoke capacity artifact. It
+Complete the manual W&B run-config and offline loss-history inspection before
+invoking `--verify-smoke`. The stamp is stored under paths.readiness_root and
+records bundle-relative references and hashes for checkpoints, manifests,
+ledger rows, Slurm logs, the submission receipt, and the fresh smoke capacity
+artifact. Among W&B fields, the current stamp records only the run-ID identity
+marker, path, and hash; it does not record or hash the manually inspected run
+config or event history. It
 also records the allocated worker's H100 check and step-3 reserved-memory
 headroom per CUDA rank. The runtime records 63.29 GiB usable H100 memory and a
 7 GiB non-PyTorch reserve, so every rank's step-3 PyTorch reserved peak must be

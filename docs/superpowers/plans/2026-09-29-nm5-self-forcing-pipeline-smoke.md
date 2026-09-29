@@ -84,6 +84,39 @@
 
 - [ ] Query fresh NM5 capacity for a new smoke pair ID and store matching local/remote `max_parallel.json` artifacts.
 - [ ] Run the parent and per-profile preflights, then submit the two 10-step jobs serially on 4×H100.
-- [ ] Monitor through terminal states. Require both jobs `COMPLETED`, final checkpoint and ledger evidence, offline W&B run IDs, four H100 markers, and all four rank-3 reserved-memory peaks at or below 56.29 GiB.
+- [ ] Monitor through terminal states. Require both jobs `COMPLETED`, final checkpoint and ledger evidence, offline W&B run IDs, four H100 markers, and all four rank-3 reserved-memory peaks at or below 56.29 GiB. Manually inspect each profile's resolved W&B run config and actual offline event history before `--verify-smoke`; require finite losses at the expected steps, including K3 generator and critic losses at step 1 and critic loss at step 10. The readiness stamp records W&B identity only and does not replace this manual history check.
 - [ ] Write and verify the immutable smoke readiness stamp.
 - [ ] Refresh capacity for a distinct full pair, derive `train.timeout_seconds` from measured smoke throughput, and submit the 600-step full pair only after readiness passes.
+
+### Task 6: Repair the empty LoRA checkpoint and retain the fresh-smoke gate
+
+**Evidence from smoke C:** The K3 job reached its 10-step cap and wrote a checkpoint marked `generator_format=lora_adapter`, `metadata.step=10`, and `metadata.final=true`. Metadata-only checkpoint inspection found an empty `generator` mapping, no generator EMA, and 825 critic entries. Training logs had three LoRA-name markers, each listing 32 unique adapter names; the generator optimizer had 32 state entries and 32 parameters. This rules out LoRA injection being absent and points to adapter extraction/serialization after optimizer setup. The worker then failed closed because there were no generator weights. This is separate from the earlier import-shadowing and asset-root CWD failures.
+
+**Historical evidence gap:** The resolved `latest.pt` target and SHA-256 were confirmed, and the runtime imported all three training modules from the copied source tree under torch `2.5.1+cu124` / PEFT `0.21.0`, but smoke C did not capture the intermediate raw and PEFT-filtered state-dict key counts. A faithful nested-wrapper regression later reproduced an empty PEFT-filtered mapping despite the expected LoRA parameters. Treat the missing smoke-C counts as a diagnostic limitation, not as an unfinished pre-fix investigation. The source confirms K3 should log generator and critic losses at step 1, then critic losses at step 10; the save runs before the step-10 `wandb.log`, so this failed save can explain a missing final loss and skipped `wandb.finish()`. A missing numeric `wandb-summary.json` does not establish that offline event history is empty. The actual history remains unverified.
+
+**Implemented fault boundary repair:** LoRA injection checks the selected trainable names before FSDP wrapping and the optimizer rejects an empty or non-LoRA trainable set. Checkpoint save now calls `fsdp_lora_state_dict()` with those expected names, collects only trainable `lora_A`/`lora_B` tensors from `named_parameters()` inside `summon_full_params()`, normalizes nested FSDP/checkpoint/default-adapter path segments, and rejects any key-set mismatch against the injected names. `build_lora_checkpoint_payload()` rejects empty or non-LoRA generator mappings before publication; the exporter and worker independently enforce the exact selected adapter scope.
+
+**Regression evidence and remaining gate:** The original regression reproduced an empty PEFT-filtered mapping for a faithful 32-tensor nested-wrapper layout. Focused coverage now drives the actual `fsdp_lora_state_dict()` control flow with a summon-context harness, verifies wrapper extraction plus all 32 names and values, and exports, serializes, reloads, and restores every tensor into a fresh equivalent model through `load_lora_state_dict()`. Local torch lacks PEFT and a CPU accelerator for a real FSDP instance, so live four-rank FSDP and PEFT 0.21 compatibility remain required acceptance checks in the fresh NM5 K2/K3 smoke pair.
+
+**Smoke acceptance status:** The worker finalizer now reuses the inference scope validator to reject wrong-layer or incomplete generator adapters independently of the trainer. The next smoke remains blocked on live FSDP/PEFT export and load evidence plus real offline W&B event-history inspection. Acceptance requires the resolved W&B run config and finite recorded losses, not only a run-ID marker or summary file; K3 must contain generator and critic losses at step 1 and critic loss at step 10. History parsing remains a manual smoke acceptance check in this task.
+
+**Files:**
+- Reviewed and modified: `scripts/looped_self_forcing_pipeline/source/model/lora.py`
+- Reviewed and modified: `scripts/looped_self_forcing_pipeline/source/utils/distributed.py`
+- Reviewed and modified: `scripts/looped_self_forcing_pipeline/source/trainer/distillation.py`
+- Further implementation changes require a new reproduced failure and a scoped review.
+- Tests: focused LoRA export tests and `tests/test_looped_self_forcing_worker.py`.
+
+- [x] Reconcile the smoke checkpoint pointer with its concrete file and confirm metadata/counts before modifying the exporter. The resolved target is `checkpoint_model_000010/model.pt`; SHA-256 and metadata/counts are recorded above.
+- [x] Confirm the runtime module origins and torch/PEFT versions; all three modules resolved from the copied source tree.
+- [x] Preserve the smoke-C diagnostic limitation: the checkpoint had no generator tensors despite 32 injected/optimized adapters, but intermediate raw and PEFT-filtered outputs and key counts were not captured. The controlled nested-wrapper regression later reproduced empty PEFT-filtered output; the fresh smoke remains the live compatibility check.
+- [x] Reproduce the failing boundary with a tiny model or controlled training save path. The faithful nested-wrapper regression reproduced an empty filtered mapping despite 32 trainable A/B tensors.
+- [ ] Reconcile W&B offline event history directly and verify real loss records at K3 step 1 and step 10 after the next successful smoke; require the actual run history, not only a run-ID marker or summary JSON.
+- [x] Add a failing regression for the demonstrated cause before changing implementation. It requires the exact selected-block A/B key scope of 32 tensors and their values.
+- [x] Use direct trainable-parameter extraction and exact expected-name comparison after the nested-prefix hypothesis reproduced.
+- [x] Reject empty or non-LoRA adapter mappings at payload construction/save time; the exporter checks exact injected names and the worker independently validates the selected layer scope.
+- [x] Add save/load coverage proving a valid exported adapter restores every tensor into a fresh model and an empty adapter fails before a checkpoint is published.
+- [x] Run focused and workspace suites and complete independent code review; results are recorded in the implementation report.
+- [x] Run `student-codebase-audit`; the current result remains partially conforming because live NM5 FSDP/PEFT, W&B history, and readiness evidence are pending.
+- [x] Rerun focused `sue-doc-code-consistency` after correcting this section; the Task 6 plan, pipeline README, and implementation contracts are consistent.
+- [ ] Do not start the next smoke until the reviewer confirms the extraction fix is supported by the reproduced cause. Do not submit fullrun until a fresh K2/K3 smoke pair and readiness checks pass.
