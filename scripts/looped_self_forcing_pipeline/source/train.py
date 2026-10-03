@@ -2,7 +2,10 @@ import argparse
 import os
 from pathlib import Path
 from omegaconf import OmegaConf
-from utils.training_config import validate_training_preflight
+from utils.training_config import (
+    validate_supervised_training_preflight,
+    validate_training_preflight,
+)
 
 
 def build_parser():
@@ -51,7 +54,10 @@ def main(argv=None):
     config.preflight = args.preflight
 
     if args.preflight:
-        validate_training_preflight(config)
+        if config.trainer == "diffusion":
+            validate_supervised_training_preflight(config)
+        else:
+            validate_training_preflight(config)
         print("training preflight passed")
         return 0
 

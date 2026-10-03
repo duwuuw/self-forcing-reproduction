@@ -2,6 +2,7 @@ import gc
 import logging
 
 from model import CausalDiffusion
+from model.lora import prepare_generator_for_lora
 from utils.dataset import ShardingLMDBDataset, cycle
 from utils.misc import set_seed
 import torch.distributed as dist
@@ -55,11 +56,19 @@ class Trainer:
 
         # Step 2: Initialize the model and optimizer
         self.model = CausalDiffusion(config, device=self.device)
+        self.model.load_generator_base_checkpoint(config.generator_ckpt)
+        self.model.lora_parameter_names = prepare_generator_for_lora(
+            self.model.generator.model,
+            self.model.temporal_loop,
+            self.model.lora_config,
+        )
+        self._broadcast_lora_parameters()
         self.model.generator = fsdp_wrap(
             self.model.generator,
             sharding_strategy=config.sharding_strategy,
             mixed_precision=config.mixed_precision,
-            wrap_strategy=config.generator_fsdp_wrap_strategy
+            wrap_strategy=config.generator_fsdp_wrap_strategy,
+            min_num_params=40_000_000,
         )
 
         self.model.text_encoder = fsdp_wrap(
@@ -115,21 +124,6 @@ class Trainer:
             print(f"Setting up EMA with weight {ema_weight}")
             self.generator_ema = EMA_FSDP(self.model.generator, decay=ema_weight)
 
-        ##############################################################################################################
-        # 7. (If resuming) Load the model and optimizer, lr_scheduler, ema's statedicts
-        if getattr(config, "generator_ckpt", False):
-            print(f"Loading pretrained generator from {config.generator_ckpt}")
-            state_dict = torch.load(config.generator_ckpt, map_location="cpu")
-            if "generator" in state_dict:
-                state_dict = state_dict["generator"]
-            elif "model" in state_dict:
-                state_dict = state_dict["model"]
-            self.model.generator.load_state_dict(
-                state_dict, strict=True
-            )
-
-        ##############################################################################################################
-
         # Let's delete EMA params for early steps to save some computes at training and inference
         if self.step < config.ema_start_step:
             self.generator_ema = None
@@ -168,7 +162,11 @@ class Trainer:
 
         # Step 1: Get the next batch of text prompts
         text_prompts = batch["prompts"]
-        if not self.config.load_raw_video:  # precomputed latent
+        if "clean_latent" in batch:
+            clean_latent = batch["clean_latent"].to(
+                device=self.device, dtype=self.dtype
+            )
+        elif not self.config.load_raw_video:  # precomputed latent
             clean_latent = batch["ode_latent"][:, -1].to(
                 device=self.device, dtype=self.dtype)
         else:  # encode raw video to latent
@@ -177,33 +175,15 @@ class Trainer:
             with torch.no_grad():
                 clean_latent = self.model.vae.encode_to_latent(
                     frames).to(device=self.device, dtype=self.dtype)
-        image_latent = clean_latent[:, 0:1, ]
-
-        batch_size = len(text_prompts)
-        image_or_video_shape = list(self.config.image_or_video_shape)
-        image_or_video_shape[0] = batch_size
-
         # Step 2: Extract the conditional infos
         with torch.no_grad():
             conditional_dict = self.model.text_encoder(
                 text_prompts=text_prompts)
 
-            if not getattr(self, "unconditional_dict", None):
-                unconditional_dict = self.model.text_encoder(
-                    text_prompts=[self.config.negative_prompt] * batch_size)
-                unconditional_dict = {k: v.detach()
-                                      for k, v in unconditional_dict.items()}
-                self.unconditional_dict = unconditional_dict  # cache the unconditional_dict
-            else:
-                unconditional_dict = self.unconditional_dict
-
         # Step 3: Train the generator
         generator_loss, log_dict = self.model.generator_loss(
-            image_or_video_shape=image_or_video_shape,
             conditional_dict=conditional_dict,
-            unconditional_dict=unconditional_dict,
             clean_latent=clean_latent,
-            initial_latent=image_latent
         )
         self.generator_optimizer.zero_grad()
         generator_loss.backward()
@@ -231,6 +211,23 @@ class Trainer:
 
         # Step 5. Create EMA params
         # TODO: Implement EMA
+
+    def _broadcast_lora_parameters(self):
+        if not dist.is_available() or not dist.is_initialized():
+            return
+        if torch.cuda.is_available():
+            sync_device = torch.device("cuda", torch.cuda.current_device())
+        else:
+            sync_device = torch.device("cpu")
+        parameters = dict(self.model.generator.model.named_parameters())
+        with torch.no_grad():
+            for name in self.model.lora_parameter_names:
+                if name not in parameters:
+                    raise ValueError(f"injected LoRA parameter is missing: {name}")
+                parameter = parameters[name]
+                synchronized = parameter.detach().to(device=sync_device)
+                dist.broadcast(synchronized, src=0)
+                parameter.copy_(synchronized.to(device=parameter.device))
 
     def generate_video(self, pipeline, prompts, image=None):
         batch_size = len(prompts)
