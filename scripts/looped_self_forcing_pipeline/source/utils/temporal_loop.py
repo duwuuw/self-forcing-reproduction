@@ -68,6 +68,7 @@ class TemporalLoopConfig:
     stop_grad_early: bool = True
     schedule: str = "fixed"
     runtime_num_layers: int = 0
+    training_enabled: bool = False
 
     @classmethod
     def from_config(cls, config: Any, runtime_num_layers: int) -> "TemporalLoopConfig":
@@ -79,9 +80,16 @@ class TemporalLoopConfig:
         if namespace is None:
             return cls(runtime_num_layers=runtime_num_layers)
 
+        training_enabled = _get_value(namespace, "training_enabled", False)
+        if not isinstance(training_enabled, bool):
+            raise ValueError("training_enabled must be a boolean")
+
         enabled = _get_value(namespace, "enabled", False)
         if enabled is False or enabled is None:
-            return cls(runtime_num_layers=runtime_num_layers)
+            return cls(
+                runtime_num_layers=runtime_num_layers,
+                training_enabled=training_enabled,
+            )
         if not isinstance(enabled, bool):
             raise ValueError("enabled must be a boolean")
 
@@ -122,6 +130,7 @@ class TemporalLoopConfig:
             stop_grad_early=stop_grad_early,
             schedule=schedule,
             runtime_num_layers=runtime_num_layers,
+            training_enabled=training_enabled,
         )
 
     def resolve_loop_count(self, block_idx: int, total_ar_blocks: int) -> int:

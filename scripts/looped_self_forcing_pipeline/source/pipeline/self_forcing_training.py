@@ -319,6 +319,116 @@ class SelfForcingTrainingPipeline:
 
         return output, denoised_timestep_from, denoised_timestep_to
 
+    def teacher_forced_flow_prediction(
+        self,
+        clean_latent: torch.Tensor,
+        noisy_latent: torch.Tensor,
+        timestep: torch.Tensor,
+        conditional_dict: dict,
+    ) -> torch.Tensor:
+        """Predict flow one noisy AR block at a time with clean cached history."""
+        if self.independent_first_frame is not False:
+            raise ValueError(
+                "teacher_forced_flow_prediction requires independent_first_frame=false"
+            )
+        if self.temporal_loop.enabled is not True:
+            raise ValueError(
+                "teacher_forced_flow_prediction requires temporal_loop.enabled=true"
+            )
+        if getattr(self.temporal_loop, "training_enabled", False) is not True:
+            raise ValueError(
+                "teacher_forced_flow_prediction requires "
+                "temporal_loop.training_enabled=true"
+            )
+        if self.temporal_loop.mode != "layer":
+            raise ValueError(
+                "teacher_forced_flow_prediction requires temporal_loop.mode='layer'"
+            )
+        if self.temporal_loop.stop_grad_early is not False:
+            raise ValueError(
+                "teacher_forced_flow_prediction requires "
+                "temporal_loop.stop_grad_early=false"
+            )
+
+        if clean_latent.ndim != 5 or noisy_latent.ndim != 5:
+            raise ValueError("clean_latent and noisy_latent must have shape [B,F,C,H,W]")
+        if clean_latent.shape != noisy_latent.shape:
+            raise ValueError("clean_latent and noisy_latent must have matching shapes")
+        if timestep.shape != clean_latent.shape[:2]:
+            raise ValueError("timestep must have shape [B,F]")
+
+        batch_size, num_frames, _, height, width = clean_latent.shape
+        block_size = self.num_frame_per_block
+        if isinstance(block_size, bool) or not isinstance(block_size, int) or block_size < 1:
+            raise ValueError("num_frame_per_block must be a positive integer")
+        if num_frames < 1 or num_frames % block_size:
+            raise ValueError("num_frames must be positive and divisible by num_frame_per_block")
+
+        num_blocks = num_frames // block_size
+        if self.total_ar_blocks is not None and self.total_ar_blocks != num_blocks:
+            raise ValueError(
+                "configured total_ar_blocks must match actual all_num_frames "
+                f"length ({num_blocks})"
+            )
+
+        patch_size = self.generator.model.patch_size
+        if len(patch_size) != 3 or patch_size[0] != 1:
+            raise ValueError("teacher-forced cached training requires temporal patch size 1")
+        if height % patch_size[-2] or width % patch_size[-1]:
+            raise ValueError("latent spatial dimensions must be divisible by model.patch_size")
+
+        self.frame_seq_length = (
+            (height // patch_size[-2]) * (width // patch_size[-1])
+        )
+        self._cache_noise = noisy_latent
+        self._cache_num_frames = num_frames
+        self._cache_context = conditional_dict["prompt_embeds"]
+        self._initialize_kv_cache(
+            batch_size=batch_size,
+            dtype=noisy_latent.dtype,
+            device=noisy_latent.device,
+        )
+        self._initialize_crossattn_cache(
+            batch_size=batch_size,
+            dtype=noisy_latent.dtype,
+            device=noisy_latent.device,
+        )
+
+        flow_predictions = []
+        for block_index in range(num_blocks):
+            start_frame = block_index * block_size
+            end_frame = start_frame + block_size
+            current_start = start_frame * self.frame_seq_length
+            current_noisy = noisy_latent[:, start_frame:end_frame]
+            current_timestep = timestep[:, start_frame:end_frame]
+            temporal_loop_plan = (
+                self.temporal_loop.plan_for_block(block_index, num_blocks)
+                if self.temporal_loop.enabled else None
+            )
+
+            flow_pred, _ = self.generator(
+                noisy_image_or_video=current_noisy,
+                conditional_dict=conditional_dict,
+                timestep=current_timestep,
+                kv_cache=self.kv_cache1,
+                crossattn_cache=self.crossattn_cache,
+                current_start=current_start,
+                temporal_loop_plan=temporal_loop_plan,
+            )
+            flow_predictions.append(flow_pred)
+
+            with torch.no_grad():
+                self.generator(
+                    noisy_image_or_video=clean_latent[:, start_frame:end_frame],
+                    conditional_dict=conditional_dict,
+                    timestep=torch.zeros_like(current_timestep),
+                    kv_cache=self.kv_cache1,
+                    crossattn_cache=self.crossattn_cache,
+                    current_start=current_start,
+                )
+
+        return torch.cat(flow_predictions, dim=1)
+
     def _initialize_kv_cache(self, batch_size, dtype, device):
         """
         Initialize or reset the causal model's runtime-sized KV cache.
