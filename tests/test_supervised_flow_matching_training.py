@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import sys
 import types
 from pathlib import Path
@@ -135,6 +136,42 @@ class TinyFSDP(nn.Module):
         return torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm)
 
 
+class TinyEMA:
+    instances = []
+
+    def __init__(self, module, decay, parameter_filter=None):
+        self.decay = decay
+        self.parameter_filter = parameter_filter
+        self.shadow = {
+            name: parameter.detach().float().cpu().clone()
+            for name, parameter in self._parameters(module)
+        }
+        self.update_count = 0
+        self.load_count = 0
+        self.instances.append(self)
+
+    def _parameters(self, module):
+        module = getattr(module, "module", getattr(module, "wrapped", module))
+        module = getattr(module, "model", module)
+        for name, parameter in module.named_parameters():
+            if self.parameter_filter is None or self.parameter_filter(name, parameter):
+                yield name, parameter
+
+    def update(self, module):
+        for name, parameter in self._parameters(module):
+            self.shadow[name].mul_(self.decay).add_(
+                parameter.detach().float().cpu(), alpha=1.0 - self.decay
+            )
+        self.update_count += 1
+
+    def state_dict(self):
+        return {name: value.clone() for name, value in self.shadow.items()}
+
+    def load_state_dict(self, state):
+        self.load_count += 1
+        self.shadow = {name: value.clone() for name, value in state.items()}
+
+
 class TinyDataset:
     def __len__(self):
         return 1
@@ -228,6 +265,14 @@ def source_modules(monkeypatch):
     distributed_module.barrier = lambda: None
     distributed_module.fsdp_wrap = lambda module, **_kwargs: TinyFSDP(module)
     distributed_module.fsdp_state_dict = lambda _module: {}
+    distributed_module.fsdp_lora_state_dict = lambda *_args, **_kwargs: {}
+    distributed_module.optimizer_state_dict_for_checkpoint = (
+        lambda _model, optimizer: optimizer.state_dict()
+    )
+    distributed_module.load_fsdp_lora_state_dict = lambda *_args, **_kwargs: None
+    distributed_module.load_optimizer_state_dict_for_checkpoint = (
+        lambda _model, optimizer, state: optimizer.load_state_dict(state)
+    )
     distributed_module.launch_distributed_job = lambda: None
     monkeypatch.setitem(sys.modules, "utils.distributed", distributed_module)
 
@@ -314,6 +359,178 @@ def _training_config(generator_ckpt, **overrides):
 def _write_base_checkpoint(path):
     wrapper = TinyWanDiffusionWrapper()
     torch.save({"generator": wrapper.state_dict()}, path)
+
+
+def _inject_tiny_lora(model, temporal_loop, lora_config):
+    model.requires_grad_(False)
+    names = []
+    for layer_index in range(temporal_loop.layer_start, temporal_loop.layer_end + 1):
+        for target in lora_config.target_modules:
+            module_name = target.rsplit(".", 1)[-1]
+            linear = getattr(model.blocks[layer_index].self_attn, module_name)
+            for side in ("A", "B"):
+                adapter = nn.Linear(1, 1, bias=False)
+                adapter.weight.data.fill_(0.25)
+                setattr(linear, f"lora_{side}", nn.ModuleDict({"default": adapter}))
+                names.append(
+                    f"blocks.{layer_index}.self_attn.{module_name}."
+                    f"lora_{side}.default.weight"
+                )
+    model.peft_config = {"default": object()}
+    return tuple(names)
+
+
+def _make_trainer(source_modules, monkeypatch, tmp_path, *, load_events=None, **overrides):
+    checkpoint = Path(overrides.pop("generator_ckpt", tmp_path / "base.pt"))
+    if not checkpoint.exists():
+        _write_base_checkpoint(checkpoint)
+    values = {
+        "seed": 1,
+        "mixed_precision": False,
+        "disable_wandb": True,
+        "logdir": str(tmp_path),
+        "wandb_host": "",
+        "wandb_key": "",
+        "wandb_entity": "",
+        "wandb_project": "local",
+        "wandb_save_dir": str(tmp_path),
+        "causal": True,
+        "sharding_strategy": "full",
+        "generator_fsdp_wrap_strategy": "size",
+        "text_encoder_fsdp_wrap_strategy": "size",
+        "no_visualize": True,
+        "load_raw_video": False,
+        "batch_size": 1,
+        "data_path": "synthetic-only",
+        "ema_weight": 0.0,
+        "ema_start_step": 0,
+        "beta1": 0.0,
+        "beta2": 0.99,
+        "weight_decay": 0.0,
+        "lr": 0.05,
+        "gc_interval": 100,
+        "negative_prompt": "unused",
+        "config_name": "synthetic",
+        "no_save": False,
+        "log_iters": 100,
+        "resume_checkpoint": None,
+    }
+    values.update(overrides)
+    config = _training_config(checkpoint, **values)
+
+    monkeypatch.setattr(source_modules.trainer, "launch_distributed_job", lambda: None)
+    monkeypatch.setattr(source_modules.trainer.dist, "get_rank", lambda: 0)
+    monkeypatch.setattr(source_modules.trainer.dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(
+        source_modules.trainer.dist,
+        "broadcast",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: torch.device("cpu"))
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
+    monkeypatch.setattr(source_modules.trainer, "set_seed", lambda _seed: None)
+    monkeypatch.setattr(
+        source_modules.trainer,
+        "prepare_generator_for_lora",
+        _inject_tiny_lora,
+    )
+    monkeypatch.setattr(
+        source_modules.trainer,
+        "fsdp_wrap",
+        lambda module, **_kwargs: TinyFSDP(module),
+    )
+    monkeypatch.setattr(
+        source_modules.trainer,
+        "fsdp_lora_state_dict",
+        lambda module, expected_names: source_modules.lora.extract_lora_state_dict(
+            module.wrapped.model, expected_names
+        ),
+        raising=False,
+    )
+
+    def load_lora(module, state):
+        if load_events is not None:
+            load_events["adapter"] += 1
+        return source_modules.lora.load_lora_state_dict(module.wrapped.model, state)
+
+    monkeypatch.setattr(
+        source_modules.trainer,
+        "load_fsdp_lora_state_dict",
+        load_lora,
+        raising=False,
+    )
+
+    def load_optimizer(model, optimizer, state):
+        if load_events is not None:
+            load_events["optimizer"] += 1
+        return optimizer.load_state_dict(state)
+
+    monkeypatch.setattr(
+        source_modules.trainer,
+        "load_optimizer_state_dict_for_checkpoint",
+        load_optimizer,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        torch.utils.data.distributed,
+        "DistributedSampler",
+        lambda dataset, **_kwargs: TinySampler(dataset),
+    )
+    return source_modules.trainer.Trainer(config)
+
+
+def _install_tiny_peft_loader(source_modules, monkeypatch):
+    peft = types.ModuleType("peft")
+
+    def set_peft_model_state_dict(model, state):
+        parameters = {
+            source_modules.lora._portable_lora_name(name): parameter
+            for name, parameter in model.named_parameters()
+            if "lora_" in name
+        }
+        unexpected = sorted(set(state) - set(parameters))
+        missing = sorted(set(parameters) - set(state))
+        with torch.no_grad():
+            for name, value in state.items():
+                if name in parameters:
+                    parameters[name].copy_(value)
+        return SimpleNamespace(missing_keys=missing, unexpected_keys=unexpected)
+
+    peft.set_peft_model_state_dict = set_peft_model_state_dict
+    monkeypatch.setitem(sys.modules, "peft", peft)
+
+
+def _make_resume_checkpoint(source_modules, monkeypatch, tmp_path):
+    monkeypatch.setattr(source_modules.trainer, "EMA_FSDP", TinyEMA)
+    _install_tiny_peft_loader(source_modules, monkeypatch)
+    checkpoint = tmp_path / "base.pt"
+    _write_base_checkpoint(checkpoint)
+    original = _make_trainer(
+        source_modules,
+        monkeypatch,
+        tmp_path,
+        generator_ckpt=checkpoint,
+        ema_weight=0.5,
+        ema_start_step=0,
+    )
+    original.train_one_step(
+        {
+            "prompts": ["a small synthetic video"],
+            "clean_latent": torch.ones(1, 4, 1, 2, 2),
+        }
+    )
+    original.save()
+    resume_path = tmp_path / "checkpoint_model_000001" / "model.pt"
+    return checkpoint, resume_path
+
+
+def _set_nested(mapping, dotted_path, value):
+    parts = dotted_path.split(".")
+    current = mapping
+    for part in parts[:-1]:
+        current = current.setdefault(part, {})
+    current[parts[-1]] = value
 
 
 def test_supervised_preflight_accepts_teacherless_layerwise_profile(
@@ -535,3 +752,401 @@ def test_diffusion_trainer_injects_adapters_before_fsdp_and_updates_only_selecte
             assert not torch.equal(parameter.detach(), adapter_before[name])
         else:
             torch.testing.assert_close(parameter.detach(), base_before[name])
+
+
+def test_diffusion_trainer_saves_only_adapters_and_optimizer_state(
+    source_modules, monkeypatch, tmp_path
+):
+    trainer = _make_trainer(source_modules, monkeypatch, tmp_path)
+    trainer.train_one_step(
+        {
+            "prompts": ["a small synthetic video"],
+            "clean_latent": torch.ones(1, 4, 1, 2, 2),
+        }
+    )
+
+    trainer.save()
+    checkpoint_path = tmp_path / "checkpoint_model_000001" / "model.pt"
+    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    expected = source_modules.lora.extract_lora_state_dict(
+        trainer.model.generator.wrapped.model,
+        trainer.model.lora_parameter_names,
+    )
+
+    assert payload["generator_format"] == "lora_adapter"
+    assert set(payload["generator"]) == set(expected)
+    assert all(
+        name.endswith((".lora_A.weight", ".lora_B.weight"))
+        for name in payload["generator"]
+    )
+    assert all(
+        name.startswith(("blocks.1.", "blocks.2."))
+        for name in payload["generator"]
+    )
+    assert payload["critic"] is None
+    assert payload["critic_optimizer"] is None
+    assert payload["generator_optimizer"]["state"]
+    assert payload["metadata"]["training_objective"] == "supervised_flow_matching"
+    assert payload["metadata"]["step"] == 1
+    assert payload["metadata"]["temporal_loop"] == {
+        "enabled": True,
+        "k_min": 2,
+        "k_max": 2,
+        "strength": 1.0,
+        "layer_start": 1,
+        "layer_end": 2,
+        "mode": "layer",
+        "stop_grad_early": False,
+        "schedule": "fixed",
+        "runtime_num_layers": 4,
+        "training_enabled": True,
+    }
+    assert payload["metadata"]["lora"] == trainer.config.lora
+    assert payload["metadata"]["ema"] == {
+        "enabled": False,
+        "decay": 0.0,
+        "start_step": 0,
+    }
+
+
+def test_diffusion_trainer_ema_starts_at_threshold_and_updates_lora_only(
+    source_modules, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(source_modules.trainer, "EMA_FSDP", TinyEMA)
+    trainer = _make_trainer(
+        source_modules,
+        monkeypatch,
+        tmp_path,
+        ema_weight=0.5,
+        ema_start_step=2,
+    )
+    batch = {
+        "prompts": ["a small synthetic video"],
+        "clean_latent": torch.ones(1, 4, 1, 2, 2),
+    }
+
+    assert trainer.generator_ema is None
+    trainer.train_one_step(batch)
+    assert trainer.generator_ema is None
+    trainer.train_one_step(batch)
+
+    ema = trainer.generator_ema
+    assert isinstance(ema, TinyEMA)
+    assert ema.update_count == 0
+    assert ema.shadow
+    assert all("lora_" in name for name in ema.shadow)
+    assert all(name.startswith(("blocks.1.", "blocks.2.")) for name in ema.shadow)
+    before_update = ema.state_dict()
+
+    trainer.train_one_step(batch)
+
+    assert trainer.step == 3
+    assert ema.update_count == 1
+    assert any(
+        not torch.equal(before_update[name], ema.shadow[name]) for name in before_update
+    )
+    trainer.save()
+    payload = torch.load(
+        tmp_path / "checkpoint_model_000003" / "model.pt",
+        map_location="cpu",
+        weights_only=True,
+    )
+    assert payload["generator_ema"]
+
+
+def test_diffusion_trainer_resume_restores_adapters_optimizer_ema_and_step(
+    source_modules, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(source_modules.trainer, "EMA_FSDP", TinyEMA)
+    _install_tiny_peft_loader(source_modules, monkeypatch)
+    checkpoint = tmp_path / "base.pt"
+    _write_base_checkpoint(checkpoint)
+    original = _make_trainer(
+        source_modules,
+        monkeypatch,
+        tmp_path,
+        generator_ckpt=checkpoint,
+        ema_weight=0.5,
+        ema_start_step=0,
+    )
+    original.train_one_step(
+        {
+            "prompts": ["a small synthetic video"],
+            "clean_latent": torch.ones(1, 4, 1, 2, 2),
+        }
+    )
+    assert original.generator_ema.update_count == 1
+    original.save()
+    resume_path = tmp_path / "checkpoint_model_000001" / "model.pt"
+    original_adapters = source_modules.lora.extract_lora_state_dict(
+        original.model.generator.wrapped.model,
+        original.model.lora_parameter_names,
+    )
+    original_ema = original.generator_ema.state_dict()
+    original_optimizer = original.generator_optimizer.state_dict()
+
+    resumed = _make_trainer(
+        source_modules,
+        monkeypatch,
+        tmp_path / "resumed",
+        generator_ckpt=checkpoint,
+        ema_weight=0.5,
+        ema_start_step=0,
+        resume_checkpoint=str(resume_path),
+    )
+    resumed_adapters = source_modules.lora.extract_lora_state_dict(
+        resumed.model.generator.wrapped.model,
+        resumed.model.lora_parameter_names,
+    )
+
+    assert resumed.step == original.step == 1
+    assert resumed.generator_optimizer.state
+    resumed_optimizer = resumed.generator_optimizer.state_dict()
+    assert resumed_optimizer["param_groups"] == original_optimizer["param_groups"]
+    assert resumed_optimizer["state"].keys() == original_optimizer["state"].keys()
+    for parameter_id, original_state in original_optimizer["state"].items():
+        for name, value in original_state.items():
+            resumed_value = resumed_optimizer["state"][parameter_id][name]
+            if isinstance(value, torch.Tensor):
+                torch.testing.assert_close(resumed_value, value)
+            else:
+                assert resumed_value == value
+    assert set(resumed_adapters) == set(original_adapters)
+    for name in original_adapters:
+        torch.testing.assert_close(resumed_adapters[name], original_adapters[name])
+    assert resumed.generator_ema.state_dict().keys() == original_ema.keys()
+    for name in original_ema:
+        torch.testing.assert_close(
+            resumed.generator_ema.state_dict()[name], original_ema[name]
+        )
+
+
+def test_diffusion_trainer_resume_canonicalizes_relative_base_checkpoint(
+    source_modules, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(source_modules.trainer, "EMA_FSDP", TinyEMA)
+    _install_tiny_peft_loader(source_modules, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    checkpoint = Path("base.pt")
+    _write_base_checkpoint(checkpoint)
+    original = _make_trainer(
+        source_modules,
+        monkeypatch,
+        tmp_path,
+        generator_ckpt=checkpoint,
+        ema_weight=0.5,
+        ema_start_step=0,
+    )
+    original.train_one_step(
+        {
+            "prompts": ["a small synthetic video"],
+            "clean_latent": torch.ones(1, 4, 1, 2, 2),
+        }
+    )
+    original.save()
+    resume_path = tmp_path / "checkpoint_model_000001" / "model.pt"
+    payload = torch.load(resume_path, map_location="cpu", weights_only=True)
+
+    assert payload["metadata"]["base_checkpoint"] == str(checkpoint.resolve())
+
+    resumed = _make_trainer(
+        source_modules,
+        monkeypatch,
+        tmp_path / "resumed",
+        generator_ckpt=checkpoint,
+        ema_weight=0.5,
+        ema_start_step=0,
+        resume_checkpoint=str(resume_path),
+    )
+
+    assert resumed.step == original.step == 1
+
+
+@pytest.mark.parametrize(
+    ("metadata_path", "replacement"),
+    [
+        ("training_objective", "dmd"),
+        ("student_model", "another-model"),
+        ("base_checkpoint", "/different/base.pt"),
+        ("temporal_loop.enabled", False),
+        ("temporal_loop.runtime_num_layers", 29),
+        ("temporal_loop.k_max", 3),
+        ("lora.rank", 4),
+        ("lora.target_modules", ["self_attn.k"]),
+        ("ema.decay", 0.9),
+        ("ema.start_step", 5),
+    ],
+)
+def test_resume_rejects_incompatible_metadata_before_loading_state(
+    source_modules, monkeypatch, tmp_path, metadata_path, replacement
+):
+    checkpoint, resume_path = _make_resume_checkpoint(
+        source_modules, monkeypatch, tmp_path
+    )
+    payload = torch.load(resume_path, map_location="cpu", weights_only=True)
+    _set_nested(payload["metadata"], metadata_path, replacement)
+    bad_resume = tmp_path / "metadata_mismatch.pt"
+    torch.save(payload, bad_resume)
+    load_events = {"adapter": 0, "optimizer": 0}
+    previous_ema_count = len(TinyEMA.instances)
+
+    with pytest.raises(ValueError):
+        _make_trainer(
+            source_modules,
+            monkeypatch,
+            tmp_path / "resumed",
+            generator_ckpt=checkpoint,
+            ema_weight=0.5,
+            ema_start_step=0,
+            resume_checkpoint=str(bad_resume),
+            load_events=load_events,
+        )
+
+    assert load_events == {"adapter": 0, "optimizer": 0}
+    assert all(
+        ema.load_count == 0 for ema in TinyEMA.instances[previous_ema_count:]
+    )
+
+
+def test_resume_uses_sue_portable_base_reference_and_hash(
+    source_modules, monkeypatch, tmp_path
+):
+    checkpoint, resume_path = _make_resume_checkpoint(
+        source_modules, monkeypatch, tmp_path
+    )
+    payload = torch.load(resume_path, map_location="cpu", weights_only=True)
+    digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    payload["metadata"]["base_checkpoint"] = "base.pt"
+    payload["metadata"]["base_checkpoint_sha256"] = digest
+    sue_resume = tmp_path / "sue_resume.pt"
+    torch.save(payload, sue_resume)
+    monkeypatch.setenv("SUE_ASSET_ROOT", str(tmp_path))
+    monkeypatch.setenv("SUE_BASE_CHECKPOINT_RELATIVE_PATH", "base.pt")
+    monkeypatch.setenv("SUE_BASE_CHECKPOINT_SHA256", digest)
+
+    resumed = _make_trainer(
+        source_modules,
+        monkeypatch,
+        tmp_path / "resumed",
+        generator_ckpt=checkpoint,
+        ema_weight=0.5,
+        ema_start_step=0,
+        resume_checkpoint=str(sue_resume),
+    )
+
+    assert resumed.step == 1
+
+
+def test_resume_rejects_sue_base_hash_mismatch_before_loading_state(
+    source_modules, monkeypatch, tmp_path
+):
+    checkpoint, resume_path = _make_resume_checkpoint(
+        source_modules, monkeypatch, tmp_path
+    )
+    payload = torch.load(resume_path, map_location="cpu", weights_only=True)
+    payload["metadata"]["base_checkpoint"] = "base.pt"
+    payload["metadata"]["base_checkpoint_sha256"] = "0" * 64
+    bad_resume = tmp_path / "base_hash_mismatch.pt"
+    torch.save(payload, bad_resume)
+    digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    monkeypatch.setenv("SUE_ASSET_ROOT", str(tmp_path))
+    monkeypatch.setenv("SUE_BASE_CHECKPOINT_RELATIVE_PATH", "base.pt")
+    monkeypatch.setenv("SUE_BASE_CHECKPOINT_SHA256", digest)
+    load_events = {"adapter": 0, "optimizer": 0}
+    previous_ema_count = len(TinyEMA.instances)
+
+    with pytest.raises(ValueError):
+        _make_trainer(
+            source_modules,
+            monkeypatch,
+            tmp_path / "resumed",
+            generator_ckpt=checkpoint,
+            ema_weight=0.5,
+            ema_start_step=0,
+            resume_checkpoint=str(bad_resume),
+            load_events=load_events,
+        )
+
+    assert load_events == {"adapter": 0, "optimizer": 0}
+    assert all(
+        ema.load_count == 0 for ema in TinyEMA.instances[previous_ema_count:]
+    )
+
+
+@pytest.mark.parametrize("corruption", ["shape", "type"])
+def test_resume_rejects_corrupt_same_key_ema_before_loading_state(
+    source_modules, monkeypatch, tmp_path, corruption
+):
+    checkpoint, resume_path = _make_resume_checkpoint(
+        source_modules, monkeypatch, tmp_path
+    )
+    payload = torch.load(resume_path, map_location="cpu", weights_only=True)
+    key = next(iter(payload["generator_ema"]))
+    value = payload["generator_ema"][key]
+    payload["generator_ema"][key] = (
+        torch.zeros((*value.shape, 1)) if corruption == "shape" else "not a tensor"
+    )
+    bad_resume = tmp_path / "corrupt_ema.pt"
+    torch.save(payload, bad_resume)
+    load_events = {"adapter": 0, "optimizer": 0}
+    previous_ema_count = len(TinyEMA.instances)
+
+    with pytest.raises(ValueError, match="EMA"):
+        _make_trainer(
+            source_modules,
+            monkeypatch,
+            tmp_path / "resumed",
+            generator_ckpt=checkpoint,
+            ema_weight=0.5,
+            ema_start_step=0,
+            resume_checkpoint=str(bad_resume),
+            load_events=load_events,
+        )
+
+    assert load_events == {"adapter": 0, "optimizer": 0}
+    assert all(
+        ema.load_count == 0 for ema in TinyEMA.instances[previous_ema_count:]
+    )
+
+
+def test_diffusion_trainer_resume_rejects_missing_active_ema(
+    source_modules, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(source_modules.trainer, "EMA_FSDP", TinyEMA)
+    _install_tiny_peft_loader(source_modules, monkeypatch)
+    checkpoint = tmp_path / "base.pt"
+    _write_base_checkpoint(checkpoint)
+    original = _make_trainer(
+        source_modules,
+        monkeypatch,
+        tmp_path,
+        generator_ckpt=checkpoint,
+        ema_weight=0.5,
+        ema_start_step=0,
+    )
+    original.train_one_step(
+        {
+            "prompts": ["a small synthetic video"],
+            "clean_latent": torch.ones(1, 4, 1, 2, 2),
+        }
+    )
+    original.save()
+    payload = torch.load(
+        tmp_path / "checkpoint_model_000001" / "model.pt",
+        map_location="cpu",
+        weights_only=True,
+    )
+    payload["generator_ema"] = None
+    bad_resume = tmp_path / "missing_ema.pt"
+    torch.save(payload, bad_resume)
+
+    with pytest.raises(ValueError, match="EMA"):
+        _make_trainer(
+            source_modules,
+            monkeypatch,
+            tmp_path / "resumed",
+            generator_ckpt=checkpoint,
+            ema_weight=0.5,
+            ema_start_step=0,
+            resume_checkpoint=str(bad_resume),
+        )

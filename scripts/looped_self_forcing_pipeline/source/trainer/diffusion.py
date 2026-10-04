@@ -1,8 +1,10 @@
 import gc
 import logging
+import re
+from pathlib import Path
 
 from model import CausalDiffusion
-from model.lora import prepare_generator_for_lora
+from model.lora import build_lora_checkpoint_payload, prepare_generator_for_lora
 from utils.dataset import ShardingLMDBDataset, cycle
 from utils.misc import set_seed
 import torch.distributed as dist
@@ -12,7 +14,16 @@ import wandb
 import time
 import os
 
-from utils.distributed import EMA_FSDP, barrier, fsdp_wrap, fsdp_state_dict, launch_distributed_job
+from utils.distributed import (
+    EMA_FSDP,
+    barrier,
+    fsdp_lora_state_dict,
+    fsdp_wrap,
+    launch_distributed_job,
+    load_fsdp_lora_state_dict,
+    load_optimizer_state_dict_for_checkpoint,
+    optimizer_state_dict_for_checkpoint,
+)
 
 
 class Trainer:
@@ -118,33 +129,47 @@ class Trainer:
 
             renamed_n = rename_param(n)
             self.name_to_trainable_params[renamed_n] = p
-        ema_weight = config.ema_weight
         self.generator_ema = None
-        if (ema_weight is not None) and (ema_weight > 0.0):
-            print(f"Setting up EMA with weight {ema_weight}")
-            self.generator_ema = EMA_FSDP(self.model.generator, decay=ema_weight)
+        self._maybe_initialize_generator_ema()
 
-        # Let's delete EMA params for early steps to save some computes at training and inference
-        if self.step < config.ema_start_step:
-            self.generator_ema = None
+        resume_checkpoint = getattr(config, "resume_checkpoint", None)
+        if resume_checkpoint:
+            self._load_resume_checkpoint(resume_checkpoint)
 
         self.max_grad_norm = 10.0
         self.previous_time = None
 
     def save(self):
         print("Start gathering distributed model states...")
-        generator_state_dict = fsdp_state_dict(
-            self.model.generator)
+        ema_enabled = (
+            self.config.ema_weight is not None and self.config.ema_weight > 0.0
+        )
+        if (
+            ema_enabled
+            and self.step >= self.config.ema_start_step
+            and self.generator_ema is None
+        ):
+            raise RuntimeError(
+                "EMA should be initialized before saving this training step"
+            )
 
-        if self.config.ema_start_step < self.step:
-            state_dict = {
-                "generator": generator_state_dict,
-                "generator_ema": self.generator_ema.state_dict(),
-            }
-        else:
-            state_dict = {
-                "generator": generator_state_dict,
-            }
+        state_dict = build_lora_checkpoint_payload(
+            generator=fsdp_lora_state_dict(
+                self.model.generator,
+                self.model.lora_parameter_names,
+            ),
+            critic=None,
+            generator_ema=(
+                self.generator_ema.state_dict()
+                if self.generator_ema is not None else None
+            ),
+            generator_optimizer=optimizer_state_dict_for_checkpoint(
+                self.model.generator,
+                self.generator_optimizer,
+            ),
+            critic_optimizer=None,
+            metadata=self._lora_checkpoint_metadata(),
+        )
 
         if self.is_main_process:
             os.makedirs(os.path.join(self.output_path,
@@ -153,6 +178,222 @@ class Trainer:
                        f"checkpoint_model_{self.step:06d}", "model.pt"))
             print("Model saved to", os.path.join(self.output_path,
                   f"checkpoint_model_{self.step:06d}", "model.pt"))
+
+    def _lora_checkpoint_metadata(self):
+        loop = self.model.temporal_loop
+        student_model = getattr(self.config.model_kwargs, "model_name", None)
+        if student_model is None:
+            student_model = self.config.model_kwargs.get("model_name")
+        lora_config = (
+            OmegaConf.to_container(self.config.lora, resolve=True)
+            if OmegaConf.is_config(self.config.lora)
+            else dict(self.config.lora)
+        )
+        return {
+            "training_objective": "supervised_flow_matching",
+            "step": self.step,
+            "seed": int(self.config.seed),
+            "student_model": student_model,
+            "base_checkpoint": str(
+                Path(self.config.generator_ckpt).expanduser().resolve(strict=True)
+            ),
+            "temporal_loop": {
+                "enabled": loop.enabled,
+                "mode": loop.mode,
+                "layer_start": loop.layer_start,
+                "layer_end": loop.layer_end,
+                "k_min": loop.k_min,
+                "k_max": loop.k_max,
+                "strength": loop.strength,
+                "stop_grad_early": loop.stop_grad_early,
+                "schedule": loop.schedule,
+                "runtime_num_layers": loop.runtime_num_layers,
+                "training_enabled": loop.training_enabled,
+            },
+            "lora": lora_config,
+            "ema": {
+                "enabled": (
+                    self.config.ema_weight is not None
+                    and self.config.ema_weight > 0.0
+                ),
+                "decay": self.config.ema_weight,
+                "start_step": self.config.ema_start_step,
+            },
+        }
+
+    def _maybe_initialize_generator_ema(self):
+        ema_weight = self.config.ema_weight
+        if (
+            self.generator_ema is not None
+            or ema_weight is None
+            or ema_weight <= 0.0
+            or self.step < self.config.ema_start_step
+        ):
+            return
+
+        print(f"Setting up EMA with weight {ema_weight}")
+        self.generator_ema = EMA_FSDP(
+            self.model.generator,
+            decay=ema_weight,
+            parameter_filter=lambda name, parameter: (
+                "lora_" in name and parameter.requires_grad
+            ),
+        )
+
+    def _load_resume_checkpoint(self, checkpoint_path):
+        payload = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+        if not isinstance(payload, dict):
+            raise ValueError("resume checkpoint must contain a mapping")
+        if payload.get("generator_format") != "lora_adapter":
+            raise ValueError("resume_checkpoint requires an adapter-only generator")
+
+        metadata = payload.get("metadata")
+        if (
+            not isinstance(metadata, dict)
+            or metadata.get("training_objective") != "supervised_flow_matching"
+        ):
+            raise ValueError(
+                "resume_checkpoint requires supervised flow-matching metadata"
+            )
+        self._validate_resume_compatibility(metadata)
+        if payload.get("critic") is not None or payload.get("critic_optimizer") is not None:
+            raise ValueError("supervised resume checkpoint must not contain critic state")
+        generator_state = payload.get("generator")
+        if not isinstance(generator_state, dict) or not generator_state:
+            raise ValueError("resume checkpoint is missing generator adapter state")
+
+        step = metadata.get("step")
+        if isinstance(step, bool) or not isinstance(step, int) or step < 0:
+            raise ValueError(
+                "resume checkpoint metadata.step must be a non-negative integer"
+            )
+        if payload.get("generator_optimizer") is None:
+            raise ValueError("resume checkpoint is missing generator optimizer state")
+        ema_state = payload.get("generator_ema")
+        ema_enabled = (
+            self.config.ema_weight is not None and self.config.ema_weight > 0.0
+        )
+        if (
+            ema_enabled
+            and step >= self.config.ema_start_step
+            and (not isinstance(ema_state, dict) or not ema_state)
+        ):
+            raise ValueError(
+                "resume checkpoint is missing EMA state for an active EMA configuration"
+            )
+        if ema_enabled and step < self.config.ema_start_step and ema_state is not None:
+            raise ValueError("resume checkpoint has EMA state before ema_start_step")
+        if not ema_enabled and ema_state is not None:
+            raise ValueError("resume checkpoint has EMA state but EMA is disabled")
+
+        ema_template = None
+        if ema_enabled and step >= self.config.ema_start_step:
+            ema_template = self.generator_ema
+            if ema_template is None:
+                ema_template = EMA_FSDP(
+                    self.model.generator,
+                    decay=self.config.ema_weight,
+                    parameter_filter=lambda name, parameter: (
+                        "lora_" in name and parameter.requires_grad
+                    ),
+                )
+            expected_ema = ema_template.state_dict()
+            if set(ema_state) != set(expected_ema):
+                raise ValueError(
+                    "resume checkpoint EMA adapter scope does not match model"
+                )
+            for name, expected in expected_ema.items():
+                value = ema_state[name]
+                if not isinstance(value, torch.Tensor):
+                    raise ValueError(
+                        f"resume checkpoint EMA value is not a tensor: {name}"
+                    )
+                if value.shape != expected.shape or value.dtype != expected.dtype:
+                    raise ValueError(
+                        f"resume checkpoint EMA tensor shape or dtype does not match: {name}"
+                    )
+
+        load_fsdp_lora_state_dict(self.model.generator, generator_state)
+        load_optimizer_state_dict_for_checkpoint(
+            self.model.generator,
+            self.generator_optimizer,
+            payload["generator_optimizer"],
+        )
+
+        self.step = step
+        self.generator_ema = ema_template
+        if self.generator_ema is not None and ema_state is not None:
+            self.generator_ema.load_state_dict(ema_state)
+
+    def _validate_resume_compatibility(self, metadata):
+        expected = self._lora_checkpoint_metadata()
+        for key in (
+            "training_objective",
+            "student_model",
+            "temporal_loop",
+            "lora",
+            "ema",
+        ):
+            if metadata.get(key) != expected[key]:
+                raise ValueError(f"resume checkpoint {key} does not match training config")
+
+        relative_base = os.environ.get(
+            "SUE_BASE_CHECKPOINT_RELATIVE_PATH", ""
+        ).strip()
+        expected_hash = os.environ.get("SUE_BASE_CHECKPOINT_SHA256", "").strip()
+        if relative_base or expected_hash:
+            self._validate_sue_base_checkpoint_identity(
+                metadata,
+                relative_base=relative_base,
+                expected_hash=expected_hash,
+            )
+            return
+
+        saved_base = metadata.get("base_checkpoint")
+        if not isinstance(saved_base, str) or not Path(saved_base).is_absolute():
+            raise ValueError(
+                "resume checkpoint base path must be absolute outside SUE runtime"
+            )
+        try:
+            saved_path = Path(saved_base).expanduser().resolve(strict=True)
+            active_path = Path(self.config.generator_ckpt).expanduser().resolve(strict=True)
+        except (OSError, RuntimeError, ValueError) as error:
+            raise ValueError("resume checkpoint base path cannot be resolved") from error
+        if saved_path != active_path:
+            raise ValueError("resume checkpoint base path does not match active generator")
+
+    def _validate_sue_base_checkpoint_identity(
+        self, metadata, *, relative_base: str, expected_hash: str
+    ):
+        if not relative_base or not expected_hash:
+            raise ValueError("SUE base checkpoint identity requires both path and SHA-256")
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_hash):
+            raise ValueError("SUE base checkpoint SHA-256 is invalid")
+
+        relative = Path(relative_base).expanduser()
+        if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+            raise ValueError("SUE base checkpoint path must be relative to SUE_ASSET_ROOT")
+        asset_root_value = os.environ.get("SUE_ASSET_ROOT", "").strip()
+        if not asset_root_value:
+            raise ValueError("SUE_ASSET_ROOT is required to validate resume base identity")
+        try:
+            asset_root = Path(asset_root_value).expanduser().resolve(strict=True)
+            active_path = Path(self.config.generator_ckpt).expanduser().resolve(strict=True)
+            resolved_asset = (asset_root / relative).resolve(strict=True)
+        except (OSError, RuntimeError, ValueError) as error:
+            raise ValueError("SUE base checkpoint path cannot be resolved") from error
+
+        if not resolved_asset.is_file() or resolved_asset != active_path:
+            raise ValueError("SUE base checkpoint path does not match active generator")
+        if metadata.get("base_checkpoint") != relative.as_posix():
+            raise ValueError("resume checkpoint SUE base reference does not match runtime")
+        saved_hash = metadata.get("base_checkpoint_sha256")
+        if (
+            not isinstance(saved_hash, str)
+            or not re.fullmatch(r"[0-9a-fA-F]{64}", saved_hash)
+            or saved_hash.lower() != expected_hash.lower()
+        ):
+            raise ValueError("resume checkpoint base SHA-256 does not match runtime")
 
     def train_one_step(self, batch):
         self.log_iters = 1
@@ -191,8 +432,12 @@ class Trainer:
             self.max_grad_norm)
         self.generator_optimizer.step()
 
+        if self.generator_ema is not None:
+            self.generator_ema.update(self.model.generator)
+
         # Increment the step since we finished gradient update
         self.step += 1
+        self._maybe_initialize_generator_ema()
 
         wandb_loss_dict = {
             "generator_loss": generator_loss.item(),
@@ -208,9 +453,6 @@ class Trainer:
             if dist.get_rank() == 0:
                 logging.info("DistGarbageCollector: Running GC.")
             gc.collect()
-
-        # Step 5. Create EMA params
-        # TODO: Implement EMA
 
     def _broadcast_lora_parameters(self):
         if not dist.is_available() or not dist.is_initialized():

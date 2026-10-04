@@ -130,6 +130,78 @@ def test_out_of_scope_adapter_payload_fails_before_serialization():
         )
 
 
+def test_dmd_lora_payload_keeps_existing_critic_checkpoint_schema():
+    lora = _lora_module()
+    generator = {"blocks.2.self_attn.q.lora_A.weight": torch.ones(1)}
+    critic = {"weight": torch.tensor([2.0])}
+    critic_optimizer = {"state": {}}
+
+    payload = lora.build_lora_checkpoint_payload(
+        generator=generator,
+        critic=critic,
+        generator_ema=None,
+        generator_optimizer={"state": {}},
+        critic_optimizer=critic_optimizer,
+        metadata={"step": 12},
+    )
+
+    assert payload == {
+        "checkpoint_version": 1,
+        "generator_format": "lora_adapter",
+        "generator": generator,
+        "critic": critic,
+        "generator_ema": None,
+        "generator_optimizer": {"state": {}},
+        "critic_optimizer": critic_optimizer,
+        "metadata": {"step": 12},
+    }
+
+
+def test_supervised_lora_payload_allows_explicitly_absent_critic():
+    lora = _lora_module()
+
+    payload = lora.build_lora_checkpoint_payload(
+        generator={"blocks.2.self_attn.q.lora_A.weight": torch.ones(1)},
+        critic=None,
+        generator_ema=None,
+        generator_optimizer={"state": {}},
+        critic_optimizer=None,
+        metadata={
+            "step": 12,
+            "training_objective": "supervised_flow_matching",
+        },
+    )
+
+    assert payload["critic"] is None
+    assert payload["critic_optimizer"] is None
+    assert payload["metadata"]["training_objective"] == "supervised_flow_matching"
+
+
+@pytest.mark.parametrize(
+    ("critic", "critic_optimizer", "metadata"),
+    [
+        (None, None, {"step": 1}),
+        (None, None, {"training_objective": "dmd"}),
+        (None, {}, {"training_objective": "supervised_flow_matching"}),
+        ({}, None, {"training_objective": "supervised_flow_matching"}),
+    ],
+)
+def test_critic_free_payload_requires_supervised_objective_and_paired_fields(
+    critic, critic_optimizer, metadata
+):
+    lora = _lora_module()
+
+    with pytest.raises(ValueError, match="critic|supervised"):
+        lora.build_lora_checkpoint_payload(
+            generator={"blocks.2.self_attn.q.lora_A.weight": torch.ones(1)},
+            critic=critic,
+            generator_ema=None,
+            generator_optimizer={"state": {}},
+            critic_optimizer=critic_optimizer,
+            metadata=metadata,
+        )
+
+
 def test_exported_adapter_round_trip_restores_fresh_model(monkeypatch):
     lora = _lora_module()
     source, expected = _nested_generator()
@@ -138,7 +210,7 @@ def test_exported_adapter_round_trip_restores_fresh_model(monkeypatch):
     generator = lora.extract_lora_state_dict(source, expected)
     payload = lora.build_lora_checkpoint_payload(
         generator=generator, critic={}, generator_ema=None,
-        generator_optimizer=None, critic_optimizer=None, metadata={"step": 10},
+        generator_optimizer=None, critic_optimizer={}, metadata={"step": 10},
     )
     buffer = io.BytesIO()
     torch.save(payload, buffer)

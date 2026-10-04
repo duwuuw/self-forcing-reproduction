@@ -272,7 +272,7 @@ def load_lora_state_dict(model: nn.Module, state_dict: Mapping[str, torch.Tensor
 def build_lora_checkpoint_payload(
     *,
     generator: Mapping[str, torch.Tensor],
-    critic: Mapping[str, Any],
+    critic: Mapping[str, Any] | None,
     generator_ema: Mapping[str, torch.Tensor] | None,
     generator_optimizer: Mapping[str, Any] | None,
     critic_optimizer: Mapping[str, Any] | None,
@@ -294,16 +294,30 @@ def build_lora_checkpoint_payload(
             f"{out_of_scope}"
         )
 
+    if (critic is None) != (critic_optimizer is None):
+        raise ValueError(
+            "critic weights and optimizer state must both be present or absent"
+        )
+    if (
+        critic is None
+        and metadata.get("training_objective") != "supervised_flow_matching"
+    ):
+        raise ValueError(
+            "critic-free checkpoints require training_objective='supervised_flow_matching'"
+        )
+
     return {
         "checkpoint_version": 1,
         "generator_format": "lora_adapter",
         "generator": dict(generator),
-        "critic": dict(critic),
+        "critic": None if critic is None else dict(critic),
         "generator_ema": None if generator_ema is None else dict(generator_ema),
         "generator_optimizer": (
             None if generator_optimizer is None else dict(generator_optimizer)
         ),
-        "critic_optimizer": None if critic_optimizer is None else dict(critic_optimizer),
+        "critic_optimizer": (
+            None if critic_optimizer is None else dict(critic_optimizer)
+        ),
         "metadata": dict(metadata),
     }
 
