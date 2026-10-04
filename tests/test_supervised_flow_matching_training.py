@@ -1073,6 +1073,203 @@ def test_resume_rejects_sue_base_hash_mismatch_before_loading_state(
     )
 
 
+def test_sue_diffusion_loop_checks_each_step_and_stops_after_final_barrier(
+    source_modules, monkeypatch
+):
+    trainer_class = source_modules.trainer.Trainer
+    events = []
+
+    trainer = object.__new__(trainer_class)
+    trainer.config = SimpleNamespace(no_save=False, log_iters=2)
+    trainer.dataloader = iter(("first", "final"))
+    trainer.step = 0
+    trainer.is_main_process = True
+    trainer.disable_wandb = True
+    trainer.previous_time = None
+
+    def train_one_step(self, batch):
+        self.step += 1
+        events.append(("optimizer", self.step, batch))
+
+    def save(self):
+        events.append(("native_log_iters_save", self.step))
+
+    def checkpoint_callback(self):
+        events.append(("sue_due_check", self.step))
+        if self.step == 2:
+            events.append(("final_checkpoint", self.step))
+            return True
+        return False
+
+    trainer.train_one_step = types.MethodType(train_one_step, trainer)
+    trainer.save = types.MethodType(save, trainer)
+    monkeypatch.setattr(
+        trainer_class,
+        "_sue_checkpoint_callback",
+        staticmethod(checkpoint_callback),
+        raising=False,
+    )
+    monkeypatch.setattr(source_modules.trainer, "barrier", lambda: events.append(("barrier", trainer.step)))
+    times = iter((1.0, 2.0))
+    monkeypatch.setattr(source_modules.trainer.time, "time", lambda: next(times))
+
+    try:
+        trainer.train()
+    except StopIteration:
+        events.append(("uncapped", trainer.step))
+
+    assert events == [
+        ("optimizer", 1, "first"),
+        ("sue_due_check", 1),
+        ("barrier", 1),
+        ("optimizer", 2, "final"),
+        ("sue_due_check", 2),
+        ("final_checkpoint", 2),
+        ("barrier", 2),
+    ]
+
+
+def test_non_sue_diffusion_loop_keeps_native_log_iters_save_path(
+    source_modules, monkeypatch
+):
+    trainer_class = source_modules.trainer.Trainer
+    monkeypatch.delattr(trainer_class, "_sue_checkpoint_callback", raising=False)
+    events = []
+
+    class StopLoop(Exception):
+        pass
+
+    trainer = object.__new__(trainer_class)
+    trainer.config = SimpleNamespace(no_save=False, log_iters=2)
+    trainer.dataloader = iter(("one", "two", "three"))
+    trainer.step = 0
+    trainer.is_main_process = True
+    trainer.disable_wandb = True
+    trainer.previous_time = None
+
+    def train_one_step(self, batch):
+        self.step += 1
+        events.append(("optimizer", self.step, batch))
+        if self.step == 3:
+            raise StopLoop
+
+    def save(self):
+        events.append(("native_save", self.step))
+
+    trainer.train_one_step = types.MethodType(train_one_step, trainer)
+    trainer.save = types.MethodType(save, trainer)
+    monkeypatch.setattr(source_modules.trainer, "barrier", lambda: events.append(("barrier", trainer.step)))
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: events.append(("empty_cache", trainer.step)))
+    times = iter((1.0, 2.0))
+    monkeypatch.setattr(source_modules.trainer.time, "time", lambda: next(times))
+
+    with pytest.raises(StopLoop):
+        trainer.train()
+
+    assert events == [
+        ("optimizer", 1, "one"),
+        ("barrier", 1),
+        ("optimizer", 2, "two"),
+        ("empty_cache", 2),
+        ("native_save", 2),
+        ("empty_cache", 2),
+        ("barrier", 2),
+        ("optimizer", 3, "three"),
+    ]
+
+
+def test_sue_checkpoint_error_raises_before_the_existing_barrier(
+    source_modules, monkeypatch
+):
+    trainer_class = source_modules.trainer.Trainer
+    events = []
+    trainer = object.__new__(trainer_class)
+    trainer.config = SimpleNamespace(no_save=False, log_iters=1)
+    trainer.dataloader = iter(("one",))
+    trainer.step = 0
+    trainer.is_main_process = False
+    trainer.disable_wandb = True
+    trainer.previous_time = None
+
+    def train_one_step(self, batch):
+        self.step += 1
+        events.append(("optimizer", self.step, batch))
+
+    def checkpoint_callback(self):
+        events.append(("save_status_failure", self.step))
+        raise RuntimeError("SUE checkpoint failed on all ranks")
+
+    trainer.train_one_step = types.MethodType(train_one_step, trainer)
+    monkeypatch.setattr(
+        trainer_class,
+        "_sue_checkpoint_callback",
+        staticmethod(checkpoint_callback),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        source_modules.trainer,
+        "barrier",
+        lambda: events.append(("barrier", trainer.step)),
+    )
+
+    with pytest.raises(RuntimeError, match="failed on all ranks"):
+        trainer.train()
+
+    assert events == [
+        ("optimizer", 1, "one"),
+        ("save_status_failure", 1),
+    ]
+
+
+@pytest.mark.parametrize(("resume_step", "error"), [(3, None), (4, "exceeds")])
+def test_sue_resume_cap_never_consumes_an_extra_batch(
+    source_modules, monkeypatch, resume_step, error
+):
+    trainer_class = source_modules.trainer.Trainer
+    events = []
+
+    class NoBatchAvailable:
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            events.append(("data_read",))
+            raise AssertionError("resume cap check must precede data consumption")
+
+    trainer = object.__new__(trainer_class)
+    trainer.config = SimpleNamespace(no_save=False, log_iters=2)
+    trainer.dataloader = NoBatchAvailable()
+    trainer.step = resume_step
+    trainer.is_main_process = False
+    trainer.disable_wandb = True
+    trainer.previous_time = None
+
+    def final_checkpoint(self):
+        events.append(("final_checkpoint", self.step))
+        return True
+
+    monkeypatch.setattr(trainer_class, "_sue_max_steps", 3, raising=False)
+    monkeypatch.setattr(
+        trainer_class,
+        "_sue_checkpoint_callback",
+        staticmethod(final_checkpoint),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        source_modules.trainer,
+        "barrier",
+        lambda: events.append(("barrier", trainer.step)),
+    )
+
+    if error:
+        with pytest.raises(ValueError, match=error):
+            trainer.train()
+        assert events == []
+    else:
+        trainer.train()
+        assert events == [("final_checkpoint", 3), ("barrier", 3)]
+
+
 @pytest.mark.parametrize("corruption", ["shape", "type"])
 def test_resume_rejects_corrupt_same_key_ema_before_loading_state(
     source_modules, monkeypatch, tmp_path, corruption

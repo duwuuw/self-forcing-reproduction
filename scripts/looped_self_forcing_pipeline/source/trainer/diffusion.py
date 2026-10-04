@@ -485,13 +485,33 @@ class Trainer:
         return current_video
 
     def train(self):
+        sue_checkpoint_callback = getattr(
+            type(self), "_sue_checkpoint_callback", None
+        )
+        sue_max_steps = getattr(type(self), "_sue_max_steps", None)
+        if sue_checkpoint_callback is not None and sue_max_steps is not None:
+            if self.step > sue_max_steps:
+                raise ValueError(
+                    f"resumed training step {self.step} exceeds SUE_MAX_STEPS {sue_max_steps}"
+                )
+
         while True:
-            batch = next(self.dataloader)
-            self.train_one_step(batch)
-            if (not self.config.no_save) and self.step % self.config.log_iters == 0:
-                torch.cuda.empty_cache()
-                self.save()
-                torch.cuda.empty_cache()
+            if sue_checkpoint_callback is not None:
+                if self.step == sue_max_steps:
+                    sue_checkpoint_callback(self)
+                    stop_after_step = True
+                else:
+                    batch = next(self.dataloader)
+                    self.train_one_step(batch)
+                    stop_after_step = sue_checkpoint_callback(self)
+            else:
+                batch = next(self.dataloader)
+                self.train_one_step(batch)
+                stop_after_step = False
+                if (not self.config.no_save) and self.step % self.config.log_iters == 0:
+                    torch.cuda.empty_cache()
+                    self.save()
+                    torch.cuda.empty_cache()
 
             barrier()
             if self.is_main_process:
@@ -502,3 +522,6 @@ class Trainer:
                     if not self.disable_wandb:
                         wandb.log({"per iteration time": current_time - self.previous_time}, step=self.step)
                     self.previous_time = current_time
+
+            if stop_after_step:
+                break
