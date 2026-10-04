@@ -71,6 +71,37 @@ def _require_checkpoint_seed(payload: dict, expected_seed: int) -> int:
     return seed
 
 
+def _validate_training_checkpoint_objective(train_config, payload: dict) -> None:
+    """Validate critic presence against the resolved trainer and objective."""
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ValueError("full checkpoint is missing training metadata")
+    for key in ("critic", "critic_optimizer"):
+        if key not in payload:
+            raise ValueError(f"full checkpoint is missing {key}")
+
+    trainer = train_config.get("trainer")
+    objective = metadata.get("training_objective")
+    critic = payload.get("critic")
+    critic_optimizer = payload.get("critic_optimizer")
+
+    if trainer == "diffusion":
+        if objective != "supervised_flow_matching":
+            raise ValueError("resolved trainer and checkpoint objective do not match")
+        if critic is not None or critic_optimizer is not None:
+            raise ValueError("supervised flow-matching checkpoint must not contain critic state")
+        return
+
+    if trainer not in (None, "score_distillation"):
+        raise ValueError(f"unsupported resolved trainer for adapter export: {trainer}")
+    if objective not in (None, "dmd"):
+        raise ValueError("resolved trainer and checkpoint objective do not match")
+    if critic is None or critic_optimizer is None:
+        raise ValueError("DMD/legacy checkpoint requires critic weights and optimizer state")
+    if not isinstance(critic, dict) or not isinstance(critic_optimizer, dict):
+        raise ValueError("DMD/legacy critic weights and optimizer state must be mappings")
+
+
 def build_inference_payload(
     full_payload: dict,
     *,
@@ -205,9 +236,10 @@ def export_checkpoint(
     payload = torch.load(source, map_location="cpu", weights_only=True, mmap=True)
     if payload.get("generator_format") != "lora_adapter":
         raise ValueError("full checkpoint is not a LoRA adapter checkpoint")
-    for key in ("generator", "critic", "generator_optimizer", "critic_optimizer", "metadata"):
+    for key in ("generator", "generator_optimizer", "metadata"):
         if payload.get(key) is None:
             raise ValueError(f"full checkpoint is missing {key}")
+    _validate_training_checkpoint_objective(train_config, payload)
     step = _require_final_training_checkpoint(payload, expected_steps)
     seed = _require_checkpoint_seed(payload, expected_seed)
     expected_directory_step = source.parent.name.removeprefix("checkpoint_model_")
