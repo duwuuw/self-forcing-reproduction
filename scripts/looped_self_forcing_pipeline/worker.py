@@ -616,6 +616,15 @@ def prepare_stage(
 
     if stage not in {"train", "infer"}:
         raise ValueError(f"unsupported worker stage: {stage}")
+    if (
+        stage == "train"
+        and _json_mapping(config.method).get("trainer") != "score_distillation"
+    ):
+        raise ValueError(
+            "this worker supports only method.trainer=score_distillation; supervised diffusion "
+            "training is unsupported until the paired-video data contract and configuration "
+            "are selected"
+        )
     exp_dir = resolve_exp_dir(exp_dir)
     output_roots = resolve_runtime_paths(exp_dir)
     run_id = str(config.run_id or "").strip()

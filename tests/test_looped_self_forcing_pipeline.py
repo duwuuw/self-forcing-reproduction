@@ -712,6 +712,55 @@ def test_pipeline_cli_rejects_private_asset_path_overrides(capsys):
     assert "/private/mount/models" not in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("method", [{"trainer": "diffusion"}, {"trainer": None}, {}])
+def test_prepare_stage_rejects_unsupported_or_missing_trainer_before_resolving_outputs(
+    tmp_path: Path, monkeypatch, method
+):
+    worker = _module("worker")
+    exp_dir = tmp_path / "uncreated-bundle"
+
+    def unexpected_call(*_args, **_kwargs):
+        pytest.fail("unsupported trainer reached bundle, asset, or output handling")
+
+    monkeypatch.setattr(worker, "resolve_exp_dir", unexpected_call)
+    monkeypatch.setattr(worker, "check_assets", unexpected_call)
+    monkeypatch.setattr(worker, "materialize_manifest", unexpected_call)
+
+    with pytest.raises(ValueError, match="supervised diffusion.*paired-video"):
+        worker.prepare_stage(
+            SimpleNamespace(method=method),
+            "train",
+            exp_dir=exp_dir,
+        )
+
+    assert not exp_dir.exists()
+
+
+def test_prepare_stage_allows_score_distillation_and_infer_without_trainer_guard(
+    tmp_path: Path, monkeypatch
+):
+    worker = _module("worker")
+
+    def resolver_sentinel(*_args, **_kwargs):
+        raise RuntimeError("next resolver reached")
+
+    monkeypatch.setattr(worker, "resolve_exp_dir", resolver_sentinel)
+
+    with pytest.raises(RuntimeError, match="next resolver reached"):
+        worker.prepare_stage(
+            SimpleNamespace(method={"trainer": "score_distillation"}),
+            "train",
+            exp_dir=tmp_path / "dmd-bundle",
+        )
+
+    with pytest.raises(RuntimeError, match="next resolver reached"):
+        worker.prepare_stage(
+            SimpleNamespace(method={}),
+            "infer",
+            exp_dir=tmp_path / "infer-bundle",
+        )
+
+
 def test_check_assets_uses_explicit_exp_dir_instead_of_environment(tmp_path: Path, monkeypatch):
     worker = _module("worker")
     package_root = tmp_path / "package"
